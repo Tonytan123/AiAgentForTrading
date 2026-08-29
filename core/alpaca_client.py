@@ -4,9 +4,10 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import StockBarsRequest, StockLatestBarRequest
+from alpaca.data.enums import DataFeed
 from alpaca.data.timeframe import TimeFrame
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 with open("config/settings.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
@@ -34,18 +35,13 @@ class AlpacaGateway:
         return self.trading_client.get_orders()
 
     def get_current_price(self, symbol: str) -> float:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=5)
-        req = StockBarsRequest(
-            symbol_or_symbols=symbol,
-            timeframe=TimeFrame.Day,
-            start=start_time,
-            end=end_time
-        )
-        bars = self.data_client.get_stock_bars(req)
-        if symbol in bars:
-            return float(bars[symbol][-1].close)
+        req = StockLatestBarRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
+        latest_bars = self.data_client.get_stock_latest_bar(req)
+        if symbol in latest_bars and latest_bars[symbol] is not None:
+            return float(latest_bars[symbol].close)
         raise ValueError(f"No market data found for {symbol}")
+
+
 
     def submit_bracket_order(self, symbol: str, qty: int, take_profit_price: float, stop_loss_price: float):
         req = MarketOrderRequest(
