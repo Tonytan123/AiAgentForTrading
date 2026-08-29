@@ -1,9 +1,11 @@
-from core.regime_engine import RegimeEngine, RegimeState
+"""Integration test module for real-time VIX and FRED credit spread data fetching."""
+
 import pytest
 import yfinance as yf
+from core.regime_engine import RegimeEngine, RegimeState
 
 
-def test_fetch_regime_real_vix_details(capsys):
+def test_fetch_regime_real_vix_details():
     """测试实际调用 yfinance 拉取 VIX 详细数据及 RegimeEngine 状态输出"""
     # 1. 直接拉取并打印 yfinance 5日 VIX 详细行情数据
     vix_ticker = yf.Ticker("^VIX")
@@ -33,7 +35,10 @@ def test_fetch_regime_real_vix_details(capsys):
     print("=" * 60)
     print(f"VIX 指数值      : {state.vix:.2f}")
     print(f"高收益债利差    : {state.hy_spread:.2f}%")
-    print(f"是否开启避险    : {state.is_risk_off} ({'Risk-Off 规避风险' if state.is_risk_off else 'Risk-On 风险偏好'})")
+    print(
+        f"是否开启避险    : {state.is_risk_off} "
+        f"({'Risk-Off 规避风险' if state.is_risk_off else 'Risk-On 风险偏好'})"
+    )
     print(f"动量策略权重    : {state.momentum_weight:.2f}")
     print(f"宏观策略权重    : {state.macro_weight:.2f}")
     print(f"逆向策略权重    : {state.contrarian_weight:.2f}")
@@ -46,4 +51,7 @@ def test_fetch_regime_real_vix_details(capsys):
     assert 0.0 <= state.momentum_weight <= 1.0
     assert 0.0 <= state.macro_weight <= 1.0
     assert 0.0 <= state.contrarian_weight <= 1.0
-    assert state.momentum_weight + state.macro_weight + state.contrarian_weight == pytest.approx(1.0)
+    total_weights = (
+        state.momentum_weight + state.macro_weight + state.contrarian_weight
+    )
+    assert total_weights == pytest.approx(1.0)

@@ -1,7 +1,8 @@
+"""Unit and integration test module for RegimeEngine."""
+
 from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
-
 from core.regime_engine import RegimeEngine, RegimeState
 
 
@@ -14,7 +15,10 @@ def test_fetch_regime_real_api():
     assert isinstance(state.vix, float)
     assert state.vix > 0, "VIX 值应当大于 0"
     assert isinstance(state.is_risk_off, bool)
-    assert state.momentum_weight + state.macro_weight + state.contrarian_weight == pytest.approx(1.0)
+    total_weights = (
+        state.momentum_weight + state.macro_weight + state.contrarian_weight
+    )
+    assert total_weights == pytest.approx(1.0)
 
 
 def test_fetch_regime_mocked_normal_vix():

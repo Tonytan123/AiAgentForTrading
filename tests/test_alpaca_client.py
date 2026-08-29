@@ -1,7 +1,8 @@
-from unittest.mock import MagicMock, patch
-from alpaca.trading.enums import OrderSide, OrderStatus
-import pytest
+"""Unit and integration test module for AlpacaGateway."""
 
+from unittest.mock import MagicMock, patch
+from alpaca.trading.enums import OrderStatus
+import pytest
 from core.alpaca_client import AlpacaGateway
 
 
@@ -10,8 +11,8 @@ class TestAlpacaGatewayReal:
 
     @pytest.fixture
     def gateway(self):
+        """Fixture returning an instance of AlpacaGateway."""
         return AlpacaGateway()
-
 
     def test_real_get_account(self, gateway):
         """测试获取 Alpaca 账户信息并打印"""
@@ -42,9 +43,12 @@ class TestAlpacaGatewayReal:
         print("=" * 60)
         if positions:
             for p in positions:
+                pl_pct = float(p.unrealized_plpc) * 100
                 print(
-                    f"标的: {p.symbol:<6} | 数量: {p.qty:<6} | 均价: ${float(p.avg_entry_price):.2f} | "
-                    f"现价: ${float(p.current_price):.2f} | 浮动盈亏: ${float(p.unrealized_pl):.2f} ({float(p.unrealized_plpc)*100:.2f}%)"
+                    f"标的: {p.symbol:<6} | 数量: {p.qty:<6} | "
+                    f"均价: ${float(p.avg_entry_price):.2f} | "
+                    f"现价: ${float(p.current_price):.2f} | "
+                    f"浮动盈亏: ${float(p.unrealized_pl):.2f} ({pl_pct:.2f}%)"
                 )
         else:
             print("当前暂无任何持仓 (No Open Positions)")
@@ -90,7 +94,7 @@ class TestAlpacaGatewayMock:
 
     @patch("core.alpaca_client.TradingClient")
     @patch("core.alpaca_client.StockHistoricalDataClient")
-    def test_mock_submit_bracket_order(self, mock_data_client, mock_trading_client):
+    def test_mock_submit_bracket_order(self, _mock_data_client, mock_trading_client):
         """测试提交 Bracket Order (带止盈止损的包围单)"""
         mock_order_response = MagicMock()
         mock_order_response.id = "mock-order-id-12345"
@@ -107,7 +111,7 @@ class TestAlpacaGatewayMock:
             symbol="AAPL",
             qty=10,
             take_profit_price=230.50,
-            stop_loss_price=210.00
+            stop_loss_price=210.00,
         )
 
         mock_instance.submit_order.assert_called_once()
@@ -116,10 +120,13 @@ class TestAlpacaGatewayMock:
 
     @patch("core.alpaca_client.TradingClient")
     @patch("core.alpaca_client.StockHistoricalDataClient")
-    def test_mock_close_position(self, mock_data_client, mock_trading_client):
+    def test_mock_close_position(self, _mock_data_client, mock_trading_client):
         """测试平仓指定标的"""
         mock_instance = MagicMock()
-        mock_instance.close_position.return_value = {"symbol": "AAPL", "status": "closed"}
+        mock_instance.close_position.return_value = {
+            "symbol": "AAPL",
+            "status": "closed",
+        }
         mock_trading_client.return_value = mock_instance
 
         gateway = AlpacaGateway()
