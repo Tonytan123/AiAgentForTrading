@@ -1,6 +1,6 @@
 alpaca:
   api_key: "PKX4HRNDRZ5GCY7OUDYGL4XM34"
-  secret_key: "5S3x4e4ozaCtvspDaQfJq811imsukWTA6P4F7t9QV45Z"
+  secret_key: ""
   paper: true
 
 featherless:
