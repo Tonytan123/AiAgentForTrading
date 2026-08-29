@@ -12,9 +12,20 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pylint>=4.0.8",
     "pytest>=9.1.1",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint.messages_control]
+disable = [
+    "too-few-public-methods",
+    "duplicate-code",
+]
+
 

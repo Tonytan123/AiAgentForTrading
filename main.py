@@ -1,4 +1,8 @@
+"""Main entrypoint module for AiAgentForTrading."""
+
+
 def main():
+    """Main execution entrypoint."""
     print("Hello from aiagentfortrading!")
 
 
