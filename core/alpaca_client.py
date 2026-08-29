@@ -8,8 +8,9 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from datetime import datetime, timedelta
 
-with open("config/settings.yaml", "r") as f:
+with open("config/settings.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
+
 
 class AlpacaGateway:
     def __init__(self):
