@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+# core/regime_engine.py
 import yfinance as yf
-
+from dataclasses import dataclass
 
 @dataclass
 class RegimeState:
@@ -10,7 +10,6 @@ class RegimeState:
     momentum_weight: float
     macro_weight: float
     contrarian_weight: float
-
 
 class RegimeEngine:
     def __init__(self, vix_threshold: float = 20.0, hy_spread_threshold: float = 10.0):
@@ -29,19 +28,20 @@ class RegimeEngine:
         is_risk_off = (vix_val > self.vix_threshold) or (hy_spread_val > self.hy_spread_threshold)
 
         if is_risk_off:
-            momentum_weight = 0.2
-            macro_weight = 0.5
-            contrarian_weight = 0.3
+            return RegimeState(
+                vix=vix_val,
+                hy_spread=hy_spread_val,
+                is_risk_off=True,
+                momentum_weight=0.20,
+                macro_weight=0.50,
+                contrarian_weight=0.30
+            )
         else:
-            momentum_weight = 0.5
-            macro_weight = 0.3
-            contrarian_weight = 0.2
-
-        return RegimeState(
-            vix=vix_val,
-            hy_spread=hy_spread_val,
-            is_risk_off=is_risk_off,
-            momentum_weight=momentum_weight,
-            macro_weight=macro_weight,
-            contrarian_weight=contrarian_weight,
-        )
+            return RegimeState(
+                vix=vix_val,
+                hy_spread=hy_spread_val,
+                is_risk_off=False,
+                momentum_weight=0.50,
+                macro_weight=0.30,
+                contrarian_weight=0.20
+            )
