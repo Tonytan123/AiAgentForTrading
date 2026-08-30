@@ -4,3 +4,4 @@ openai>=3.6.0
 pandas>=2.0.0
 pyyaml>=6.0.3
 yfinance>=1.7.0
+rich>=13.0.0
