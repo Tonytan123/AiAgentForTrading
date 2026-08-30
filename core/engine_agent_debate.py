@@ -15,7 +15,6 @@ import yfinance as yf
 # 1. CLI 与意图解析
 # ---------------------------------------------------------------------------
 
-
 def parse_intent(user_input: str) -> Dict[str, Any]:
     """
     通过轻量规则结构化提取目标信息。
@@ -66,7 +65,6 @@ def parse_intent(user_input: str) -> Dict[str, Any]:
 # 2. 市场数据工具（使用 yfinance 免费数据）
 # ---------------------------------------------------------------------------
 
-
 def fetch_price_data(ticker: str, period: str = "3mo", interval: str = "1d") -> Optional["pd.DataFrame"]:
     """获取历史调整后收盘价 DataFrame。"""
     try:
@@ -101,7 +99,6 @@ def calculate_sma(series: "pd.Series", period: int) -> float:
 # 3. 五位研究智能体（并行、相互隔离）
 # ---------------------------------------------------------------------------
 
-
 class BaseAgent:
     """所有智能体的基类，统一接口。"""
 
@@ -117,8 +114,29 @@ class BaseAgent:
 class MomentumAgent(BaseAgent):
     """动量智能体：趋势突破与相对强弱。"""
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        sys_prompt = """你的角色是动量交易智能体（Momentum Agent）。
+
+核心任务：识别市场中的强势个股（Long）和弱势个股（Short），并依据动量原则给出交易建议。
+
+分析框架：
+1. 价格趋势：使用 20日简单移动平均线 (SMA20) 和 50日简单移动平均线 (SMA50) 判断趋势方向。
+   - 上升趋势：SMA20 > SMA50 且股价 > SMA20。
+   - 下降趋势：SMA20 < SMA50 且股价 < SMA20。
+2. 动量强度：使用相对强弱指数 (RSI) 评估当前动量的健康度。
+   - 持续强势：RSI > 60。
+   - 持续弱势：RSI < 40。
+   - 价格突破：RSI 伴随价格突破关键阻力/支撑位。
+3. 波动率与风险：使用平均真实波幅 (ATR) 衡量当前波动水平，辅助止损位设定。
+4. 成交量确认：关注价格突破时的成交量是否显著放大（趋势确认信号）。
+
+决策逻辑：
+- 优先做多 (Long) 处于上升趋势且动量强劲的股票。
+- 优先做空 (Short) 处于下降趋势且动量疲弱的股票。
+- 避开盘整且波动率异常高的股票.
+        """
         super().__init__("Momentum", weight=0.20)
+        self.system_prompt = sys_prompt
 
     def analyze(self, ticker: str, intent: Dict[str, Any]) -> Dict[str, Any]:
         df = fetch_price_data(ticker, period="3mo", interval="1d")
@@ -154,8 +172,29 @@ class MomentumAgent(BaseAgent):
 class MacroAgent(BaseAgent):
     """宏观智能体：美联储、利率、行业轮动。"""
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        sys_prompt = """你的角色是宏观分析智能体（Macro Agent）。
+
+核心任务：评估当前宏观经济环境，判断哪些行业板块与宏观经济周期高度契合，适合配置资产。
+
+分析框架：
+1. 宏观周期定位：
+   - 扩张期：关注科技、非必需消费品等成长型板块。
+   - 滞胀期：关注能源、必需消费品及公用事业等防御型板块。
+   - 衰退期：关注医疗保健、必需消费品等防御型板块，规避高杠杆周期性行业。
+   - 复苏期：关注金融、工业等顺周期板块。
+2. 利率与信贷：
+   - 分析美联储数据、主要金融机构的贷款意愿及信用利差（HY Spread），判断资金成本与流动性松紧。
+3. 风险信号：
+   - 关注 VIX 恐慌指数及 VIX 期限结构，识别市场避险情绪。
+   - 监控通胀数据（CPI/PPI）及其对不同行业的影响。
+
+决策逻辑：
+- 基于当前宏观环境，推荐整体偏好的资产配置方向（例如：偏向防御型、偏向成长型）。
+- 识别与当前宏观环境最契合的行业板块.
+        """
         super().__init__("Macro", weight=0.15)
+        self.system_prompt = sys_prompt
 
     def analyze(self, ticker: str, intent: Dict[str, Any]) -> Dict[str, Any]:
         # 占位：基于模拟宏观环境得分
@@ -169,8 +208,27 @@ class MacroAgent(BaseAgent):
 class StatArbAgent(BaseAgent):
     """统计套利智能体：配对交易、价差 Z-Score。"""
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        sys_prompt = """你的角色是统计套利智能体（StatArb Agent）。
+
+核心任务：识别价格偏离长期关系（例如配对交易）的股票，预测其回归均值的机会。
+
+分析框架：
+1. 协整检验：基于移动窗口的相关性（Rolling Correlation）与 Engle-Granger 检验，识别 cointegrated 交易对。
+2. 偏离度度量：计算价差（Spread）相对于其滚动均值的标准化值（Z-Score）。
+3. 阈值交易：
+   - 当 Z-Score 绝对值 > 2.0 时，视为极端偏离，考虑建仓。
+   - 当 Z-Score 绝对值 < 0.5 时，视为回归均值，考虑平仓并锁定利润。
+4. 风险控制：
+   - 拒绝相关系数过低（例如 < 0.7）或协整性不稳定的配对。
+   - 设置最大价差止损，避免过度波动。
+
+决策逻辑：
+- 关注 Z-Score 大幅偏离的配对，构建 Beta 加权的多空组合。
+- 严格基于统计阈值进行开平仓决策，尽量减少主观情绪干扰.
+        """
         super().__init__("StatArb", weight=0.15)
+        self.system_prompt = sys_prompt
 
     def analyze(self, ticker: str, intent: Dict[str, Any]) -> Dict[str, Any]:
         # 占位：演示配对相关性/Z-Score 计算框架
@@ -184,8 +242,31 @@ class StatArbAgent(BaseAgent):
 class ContrarianAgent(BaseAgent):
     """逆向/反转智能体：极端超卖、内人买卖、恐慌情绪。"""
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        sys_prompt = """你的角色是逆向投资智能体（Contrarian Agent）。
+
+核心任务：在市场情绪极度悲观时寻找被低估的优质资产（左侧交易），而非追随趋势。
+
+分析框架：
+1. 情绪指标识别：
+   - 关注 CNN Fear & Greed Index，寻找“极度恐惧”区域。
+   - 结合散户情绪数据（如散户情绪指数），识别“散户逃离”的现象。
+2. 价格超卖状态：
+   - 使用布林带（Bollinger Bands）判断价格是否跌破下轨。
+   - 计算 RSI 值是否低于 30（超卖），并观察 RSI 是否有拐头向上迹象。
+3. 内部人动态：
+   - 监控 SEC Form 4 报告，寻找内部人士（Insider）大量增持（Buy）而非减持（Sell）的股票。
+4. 基本面支撑：
+   - 确认公司基本面依然稳健，并非“价值陷阱”。
+   - 评估其资产负债表健康度，确保有足够的流动性应对短期困难。
+
+决策逻辑：
+- 只有当“情绪极度悲观 + 价格超卖 + 内部人增持 + 基本面健康”四个条件同时满足时，才考虑建仓。
+- 严格控制仓位，因为逆向交易的风险较高，需要等待反转信号明确。
+- 盈利目标可以设定在情绪修复，价格回归中轨（布林带中轨）的位置.
+        """
         super().__init__("Contrarian", weight=0.15)
+        self.system_prompt = sys_prompt
 
     def analyze(self, ticker: str, intent: Dict[str, Any]) -> Dict[str, Any]:
         df = fetch_price_data(ticker, period="3mo", interval="1d")
@@ -217,8 +298,29 @@ class ContrarianAgent(BaseAgent):
 class ExoticAgent(BaseAgent):
     """特殊/异动智能体：日历效应、事件驱动、异常成交量/期权。"""
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        sys_prompt = """你的角色是事件驱动型智能体（Exotic Agent）。
+
+核心任务：捕捉市场中的特定事件（如财报、分红、解禁、重要经济数据发布等），并利用这些事件带来的价格异动进行交易。
+
+分析框架：
+1. 二元财报窗口交易（Binary Event Trading）:
+   - 识别“卖空型财报”：关注 QCOM 等公司，其财报发布后通常股价下跌，形成賣空机会。
+   - 识别“利好型财报”：寻找在财报前股价已被充分压制，财报发布后股价超预期反弹的機會。
+   - 关注財報窗口对冲：利用不同行业财报発表时间的错位，通过对冲策略减少市场风险。
+2. 日历效应（Calendar Effects）:
+   - 分析 January Effect（一月效应）：关注小型股在年初的表现。
+   - 关注月末/季末效应：识别月末资金流向对股价的影响。
+3. 异常期权成交（Abnormal Options Activity）:
+   - 监控异常期权成交突增形态，特别是涉及看涨期权（Call Options）的异常活动，这可能预示着大额资金的流入或对冲行为。
+
+决策逻辑：
+- 严格设定事件发生前后的持仓周期，避免事件后的不确定性。
+- 仓位控制：基于事件影响程度和价格波动风险设定仓位。
+- 盈利目标：在事件驱动的快速价格变动中迅速获利，或利用期权 vega 变化进行套利.
+        """
         super().__init__("Exotic", weight=0.15)
+        self.system_prompt = sys_prompt
 
     def analyze(self, ticker: str, intent: Dict[str, Any]) -> Dict[str, Any]:
         # 占位：检查财报窗口、期权异动、突卷成交量
@@ -247,7 +349,6 @@ class ExoticAgent(BaseAgent):
 # ---------------------------------------------------------------------------
 # 4. 共识聚合器
 # ---------------------------------------------------------------------------
-
 
 def consensus_aggregator(agent_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -418,7 +519,6 @@ def execute_scan_pool(pool: List[str] = None) -> List[Dict[str, Any]]:
 # 6. Main
 # ---------------------------------------------------------------------------
 
-
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "scan":
         execute_scan_pool()
@@ -428,4 +528,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
