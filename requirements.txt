@@ -1,0 +1,4 @@
+alpaca-py>=0.44.0
+pandas>=2.0.0
+pyyaml>=6.0.3
+yfinance>=1.7.0

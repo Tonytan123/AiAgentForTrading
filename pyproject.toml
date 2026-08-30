@@ -1,0 +1,31 @@
+[project]
+name = "aiagentfortrading"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alpaca-py>=0.44.0",
+    "pyyaml>=6.0.3",
+    "yfinance>=1.7.0",
+]
+
+[dependency-groups]
+dev = [
+    "pylint>=4.0.8",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint.messages_control]
+disable = [
+    "too-few-public-methods",
+    "duplicate-code",
+]
+
+

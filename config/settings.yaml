@@ -1,0 +1,20 @@
+alpaca:
+  api_key: "PKX4HRNDRZ5GCY7OUDYGL4XM34"
+  secret_key: ""
+  paper: true
+
+featherless:
+  base_url: "https://api.featherless.ai/v1"
+  api_key: "YOUR_FEATHERLESS_API_KEY"
+  model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+risk:
+  max_single_position_pct: 0.048  # 单仓上限 4.8%
+  max_sector_exposure_pct: 0.30   # 板块敞口上限 30%
+  max_drawdown_limit_pct: 0.05    # 单日最大回撤熔断 5%
+  max_leverage: 1.0               # 最大杠杆率
+
+strategy:
+  take_profit_multiplier: 1.08    # +8% TP
+  stop_loss_multiplier: 0.96      # -4% SL
+  consensus_threshold: 0.70       # 辩论共识入场分阈值
