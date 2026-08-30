@@ -1,0 +1,13 @@
+critic_rules:
+  universe: "S&P 500"
+  max_leverage: 1.0
+  max_single_position_pct: 0.10
+  earnings_blackout_days: 7
+  required_fields:
+    - proposal_id
+    - ticker
+    - action
+    - suggested_shares
+    - take_profit_price
+    - stop_loss_price
+    - consensus_score
