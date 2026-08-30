@@ -39,7 +39,7 @@ def load_yaml_config(path: str = "config/settings.yaml") -> Dict[str, Any]:
 
 
 def load_sp500_universe(path: str = "config/sp500_universe.json") -> List[str]:
-    """从本地 JSON 文件读取标普 500 标的池"""
+    """从本地 JSON 文件读取标普 500 标的池 (支持列表格式或 标的代码->板块 字典映射格式)"""
     if not os.path.exists(path):
         # 若未找到，提供默认白名单
         return ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "JPM", "AMD", "SPY"]
@@ -47,7 +47,22 @@ def load_sp500_universe(path: str = "config/sp500_universe.json") -> List[str]:
         data = json.load(f)
         if isinstance(data, list):
             return data
-        return data.get("tickers", ["NVDA", "AAPL", "MSFT"])
+        if isinstance(data, dict):
+            if "tickers" in data and isinstance(data["tickers"], list):
+                return data["tickers"]
+            return list(data.keys())
+        return ["NVDA", "AAPL", "MSFT"]
+
+
+def load_universe_sectors(path: str = "config/sp500_universe.json") -> Dict[str, str]:
+    """从配置文件读取 标的代码 -> 所属板块 的映射"""
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        if isinstance(data, dict) and "tickers" not in data:
+            return data
+    return {}
 
 
 def fetch_live_macro_metrics() -> Dict[str, float]:
@@ -153,6 +168,7 @@ async def main():
     )
 
     universe_tickers = load_sp500_universe("config/sp500_universe.json")
+    universe_sectors = load_universe_sectors("config/sp500_universe.json")
 
     # 交互式主事件循环
     while True:
@@ -342,7 +358,7 @@ async def main():
             order_amount = final_shares * current_price
             passed, rejections = risk_guard.validate(
                 order_amount=order_amount,
-                sector="Technology",
+                sector=universe_sectors.get(memo.ticker, "Technology"),
                 total_equity=total_equity,
                 daily_loss_pct=abs(day_pnl_pct) if day_pnl_pct < 0 else 0.0,
                 sector_holdings={"Technology": total_equity * 0.15}
