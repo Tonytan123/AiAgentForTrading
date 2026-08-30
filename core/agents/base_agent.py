@@ -1,0 +1,62 @@
+import os
+import json
+import logging
+from typing import Dict, Any, Optional
+from pydantic import BaseModel, Field
+from openai import AsyncOpenAI
+
+logger = logging.getLogger(__name__)
+
+class AgentEvaluation(BaseModel):
+    agent_name: str
+    score: float = Field(ge=0.0, le=1.0, description="得分 0.0 ~ 1.0")
+    rationale: str #Agent 给出的决策理由/分析依据。
+
+class BaseFeatherlessAgent:
+    def __init__(
+        self,
+        name: str,   # Agent 的名称，用于日志和标识
+        system_prompt: str, # Agent 的系统提示词，定义其角色、行为和约束
+        model_name: str = "meta-llama/Meta-Llama-3.1-70B-Instruct", # 模型名称
+        api_key: Optional[str] = None, # API 密钥
+        base_url: str = "https://api.featherless.ai/v1" #API基础url
+    ):
+        self.name = name
+        self.system_prompt = system_prompt
+        self.model_name = model_name
+        self.client = AsyncOpenAI(
+            api_key=api_key or os.getenv("FEATHERLESS_API_KEY", "default_mock_key"),
+            base_url=base_url
+        )
+    
+    async def evaluate(self, ticker: str, context_data: Dict[str, Any]) -> AgentEvaluation:
+        """调用 featherless LLM 进行交易策略价值评分和理由生成。
+
+        Args:
+            ticker: 股票代码 (e.g., "AAPL")
+            context_data: 包含基本面、情绪、技术面的 dict[str, Any] 上下文特征数据
+
+        Returns:
+            AgentEvaluation 对象包含 Agent 的评分和决策理由
+        """
+        user_prompt = f"标的: {ticker}\n特征数据: {json.dumps(context_data, ensure_ascii=False)}"
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": f"{self.system_prompt}\n务必仅以 JSON 格式返回: {{\"score\": 0.8, \"rationale\": \"...\"}}"},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.2,
+                response_format={"type": "json_object"}
+            )
+            raw_text = response.choices[0].message.content.strip()
+            data = json.loads(raw_text)
+            return AgentEvaluation(
+                agent_name=self.name,
+                score=float(data.get("score", 0.5)),
+                rationale=data.get("rationale", "分析完成")
+            )
+        except Exception as e:
+            logger.warning(f"[{self.name}] LLM 调用异常降级: {e}")
+            return AgentEvaluation(agent_name=self.name, score=0.5, rationale="数据不足或 LLM 降级默认分")
