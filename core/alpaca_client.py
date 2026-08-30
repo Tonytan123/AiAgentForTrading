@@ -1,5 +1,5 @@
-"""Alpaca API gateway module for paper/live trading and market data fetching."""
-
+import logging
+import yaml
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestBarRequest
@@ -10,7 +10,8 @@ from alpaca.trading.requests import (
     StopLossRequest,
     TakeProfitRequest,
 )
-import yaml
+
+logger = logging.getLogger(__name__)
 
 with open("config/settings.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
@@ -19,15 +20,19 @@ with open("config/settings.yaml", "r", encoding="utf-8") as f:
 class AlpacaGateway:
     """Gateway interface for interacting with Alpaca Trading & Market Data APIs."""
 
-    def __init__(self):
+    def __init__(self, api_key: str = None, secret_key: str = None, paper: bool = None):
+        key = api_key or config.get("alpaca", {}).get("api_key")
+        secret = secret_key or config.get("alpaca", {}).get("secret_key")
+        is_paper = paper if paper is not None else config.get("alpaca", {}).get("paper", True)
+
         self.trading_client = TradingClient(
-            api_key=config["alpaca"]["api_key"],
-            secret_key=config["alpaca"]["secret_key"],
-            paper=config["alpaca"]["paper"],
+            api_key=key,
+            secret_key=secret,
+            paper=is_paper,
         )
         self.data_client = StockHistoricalDataClient(
-            api_key=config["alpaca"]["api_key"],
-            secret_key=config["alpaca"]["secret_key"],
+            api_key=key,
+            secret_key=secret,
         )
 
     def get_account(self):
@@ -68,3 +73,31 @@ class AlpacaGateway:
     def close_position(self, symbol: str):
         """Liquidate and close an open position for a given symbol."""
         return self.trading_client.close_position(symbol_or_asset_id=symbol)
+
+    def get_account_summary(self):
+        account = self.trading_client.get_account()
+        return {
+            "total_equity": float(account.equity),  # 总权益
+            "buying_power": float(account.buying_power),  # 购买力
+            "cash": float(account.cash),  # 现金
+            "day_pnl_pct": (float(account.equity) - float(account.last_equity)) / float(account.last_equity) if float(account.last_equity) else 0.0 #当日盈亏百分比
+        }
+
+    def place_bracket_oco_order(self, ticker: str, shares: int, take_profit_price: float, stop_loss_price: float):
+        """提交 OCO (市价入场 + GTC 止盈止损)"""
+        req = MarketOrderRequest(
+            symbol=ticker,  # 股票代码
+            qty=shares,  # 股数
+            side=OrderSide.BUY,  # 买入
+            time_in_force=TimeInForce.DAY,  # 日间委托
+            order_class=OrderClass.BRACKET,  # 括号订单
+            take_profit=TakeProfitRequest(limit_price=take_profit_price),  # 止盈价
+            stop_loss=StopLossRequest(stop_price=stop_loss_price)  # 止损价
+        )
+        order = self.trading_client.submit_order(order_data=req)
+        logger.info(f"Bracket OCO 下单成功: Symbol={ticker}, ID={order.id}")
+        return str(order.id)
+
+
+# Alias for backward/forward compatibility
+AlpacaExecutionClient = AlpacaGateway

@@ -9,6 +9,7 @@ dependencies = [
     "langgraph>=1.2.11",
     "openai>=3.6.0",
     "pyyaml>=6.0.3",
+    "rich>=15.0.0",
     "yfinance>=1.7.0",
 ]
 

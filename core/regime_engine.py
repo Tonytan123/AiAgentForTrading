@@ -45,6 +45,57 @@ class RegimeEngine:
             pass
         return default_val
 
+    def determine_regime(self, vix: float, hy_spread: float) -> str:
+        """根据 VIX 与信用利差裁定宏观体制 (Regime)"""
+        if vix > self.vix_threshold or hy_spread > self.hy_spread_threshold:
+            if vix > 30.0:
+                return "Panic_Crisis"
+            return "High_Vol_Bear"
+        if vix < 18.0 and hy_spread < 4.0:
+            return "Bull_Trend"
+        return "Neutral_Range"
+
+    def get_strategy_weights(self, regime: str) -> dict:
+        """根据当前宏观体制分配 5 大策略的权重系数"""
+        if regime in ["Panic_Crisis", "High_Vol_Bear"]:
+            return {
+                "Momentum Agent": 0.10,
+                "Macro Agent": 0.40,
+                "StatArb Agent": 0.20,
+                "Contrarian Agent": 0.25,
+                "Exotic Agent": 0.05,
+                "momentum": 0.10,
+                "macro": 0.40,
+                "statarb": 0.20,
+                "contrarian": 0.25,
+                "exotic": 0.05,
+            }
+        if regime == "Bull_Trend":
+            return {
+                "Momentum Agent": 0.45,
+                "Macro Agent": 0.20,
+                "StatArb Agent": 0.15,
+                "Contrarian Agent": 0.10,
+                "Exotic Agent": 0.10,
+                "momentum": 0.45,
+                "macro": 0.20,
+                "statarb": 0.15,
+                "contrarian": 0.10,
+                "exotic": 0.10,
+            }
+        return {
+            "Momentum Agent": 0.25,
+            "Macro Agent": 0.25,
+            "StatArb Agent": 0.20,
+            "Contrarian Agent": 0.20,
+            "Exotic Agent": 0.10,
+            "momentum": 0.25,
+            "macro": 0.25,
+            "statarb": 0.20,
+            "contrarian": 0.20,
+            "exotic": 0.10,
+        }
+
     def fetch_regime(self) -> RegimeState:
         """Fetch real-time indicators and calculate market regime state."""
         # 1. 获取 VIX 数据
@@ -77,3 +128,4 @@ class RegimeEngine:
             macro_weight=0.30,
             contrarian_weight=0.20,
         )
+
