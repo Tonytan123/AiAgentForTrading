@@ -66,7 +66,7 @@ def load_universe_sectors(path: str = "config/sp500_universe.json") -> Dict[str,
     return {}
 
 
-def fetch_live_macro_metrics() -> Dict[str, float]:
+def fetch_live_macro_metrics(fred_api_key: Optional[str] = None) -> Dict[str, float]:
     """
     拉取实时宏观市场数据 (VIX 指数 与 高收益债信用利差 HY Spread)
     """
@@ -86,15 +86,26 @@ def fetch_live_macro_metrics() -> Dict[str, float]:
         console.print(f"[yellow]提示: 获取实时 VIX 失败 ({e})，使用默认参考值 {vix}[/yellow]")
 
     try:
-        # 可对接 FRED API 获取高收益债利差 (BAMLH0A0HYM2)，此处展示接口捕获逻辑
-        fred_api_key = os.getenv("FRED_API_KEY")
-        if fred_api_key:
-            fred_url = f"https://api.stlouisfed.org/fred/series/observations?series_id=BAMLH0A0HYM2&api_key={fred_api_key}&file_type=json"
+        # 可对接 FRED API 获取高收益债利差 (BAMLH0A0HYM2)
+        api_key = fred_api_key or os.getenv("FRED_API_KEY")
+        if not api_key and os.path.exists("config/settings.yaml"):
+            try:
+                cfg = load_yaml_config("config/settings.yaml")
+                api_key = cfg.get("fred", {}).get("api_key")
+            except Exception:
+                pass
+
+        if api_key:
+            fred_url = f"https://api.stlouisfed.org/fred/series/observations?series_id=BAMLH0A0HYM2&api_key={api_key}&file_type=json"
             f_res = requests.get(fred_url, timeout=5)
             if f_res.status_code == 200:
                 obs = f_res.json().get("observations", [])
                 if obs:
-                    hy_spread = float(obs[-1].get("value", hy_spread))
+                    for item in reversed(obs):
+                        val_str = item.get("value", "")
+                        if val_str and val_str != ".":
+                            hy_spread = float(val_str)
+                            break
     except Exception:
         pass
 
@@ -152,6 +163,7 @@ async def main():
     alpaca_secret = os.getenv("ALPACA_SECRET_KEY", alpaca_cfg.get("secret_key"))
     is_paper = alpaca_cfg.get("paper", True)
     featherless_key = os.getenv("FEATHERLESS_API_KEY", featherless_cfg.get("api_key"))
+    fred_key = os.getenv("FRED_API_KEY", config.get("fred", {}).get("api_key"))
 
     exec_client = AlpacaExecutionClient(api_key=alpaca_key, secret_key=alpaca_secret, paper=is_paper)
     data_client = StockHistoricalDataClient(api_key=alpaca_key, secret_key=alpaca_secret)
@@ -190,7 +202,7 @@ async def main():
             day_pnl_pct = 0.0
 
         # 3. 获取实时宏观指标并裁定 Regime 状态
-        macro_metrics = fetch_live_macro_metrics()
+        macro_metrics = fetch_live_macro_metrics(fred_api_key=fred_key)
         vix, hy_spread = macro_metrics["vix"], macro_metrics["hy_spread"]
         current_regime = regime_engine.determine_regime(vix, hy_spread)
         strategy_weights = regime_engine.get_strategy_weights(current_regime)
