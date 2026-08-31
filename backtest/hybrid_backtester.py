@@ -498,4 +498,3 @@ class HybridStrategyBacktester:
             "curve_df": curve_df,
             "trades_df": trades_df
         }
-
