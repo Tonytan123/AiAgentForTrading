@@ -21,3 +21,6 @@ class BacktestConfig:
     option_dte: int = 28               # 期权开仓 DTE
     dte_guard_threshold: int = 3       # 期权到期守护阈值 DTE <= 3
     stock_timeout_days: int = 28       # 正股超时平仓天数
+    cash_sweep_enabled: bool = True    # 开启闲置资金自动买入国债/货币基金 (SGOV)
+    cash_sweep_symbol: str = "SGOV"    # 国债/货基 ETF 标的代码
+    cash_sweep_yield: float = 0.045    # 国债/货基年化无风险收益率 4.5%

@@ -79,7 +79,9 @@ class HybridStrategyBacktester:
         option_tp_pct: float = 0.60,        # 期权价差止盈 +60%
         option_sl_pct: float = 0.50,        # 期权价差最大止损 -50% (兜底风控)
         stock_tp_pct: float = 0.08,         # 正股止盈 +8%
-        stock_sl_pct: float = 0.04          # 正股止损 -4%
+        stock_sl_pct: float = 0.04,         # 正股止损 -4%
+        cash_sweep_enabled: bool = True,    # 开启每日闲置资金买入国债/货币基金 (SGOV)
+        cash_sweep_symbol: str = "SGOV"
     ):
         self.market_data = market_data
         self.vix_series = vix_series
@@ -96,6 +98,9 @@ class HybridStrategyBacktester:
         self.option_sl_pct = option_sl_pct
         self.stock_tp_pct = stock_tp_pct
         self.stock_sl_pct = stock_sl_pct
+        self.cash_sweep_enabled = cash_sweep_enabled
+        self.cash_sweep_symbol = cash_sweep_symbol
+        self.total_treasury_yield = 0.0
 
         self.positions: List[HybridPosition] = []
         self.equity_curve: List[Dict[str, Any]] = []
@@ -121,9 +126,12 @@ class HybridStrategyBacktester:
             # 1. 每日持仓检查与撮合出场 (TP/SL/DTE守护)
             self._process_daily_settlement(dt, date_str)
 
-            # 闲置现金计入每日无风险收益 (国债/货币基金年化 4.5%)
-            if self.cash > 0:
-                self.cash += self.cash * (self.r / 252.0)
+            # 闲置现金自动配置低风险超短期国债/货基 ETF (SGOV, 年化 4.5%) 产生每日稳健无风险利息
+            daily_interest = 0.0
+            if self.cash_sweep_enabled and self.cash > 0:
+                daily_interest = self.cash * (self.r / 252.0)
+                self.cash += daily_interest
+                self.total_treasury_yield += daily_interest
 
             # 2. 计算当前组合总资产净值 (Cash + 正股市值 + 期权估值)
             current_portfolio_val = self._evaluate_current_portfolio(dt)
@@ -134,6 +142,8 @@ class HybridStrategyBacktester:
                 "equity": self.equity,
                 "cash": self.cash,
                 "portfolio_val": current_portfolio_val,
+                "daily_interest": daily_interest,
+                "cum_treasury_yield": self.total_treasury_yield,
                 "regime": regime,
                 "open_positions": len(self.positions)
             })
@@ -374,9 +384,17 @@ class HybridStrategyBacktester:
     def _evaluate_current_portfolio(self, dt) -> float:
         total = 0.0
         for pos in self.positions:
-            if pos.ticker not in self.market_data or dt not in self.market_data[pos.ticker].index:
+            if pos.ticker not in self.market_data:
                 continue
-            bar = self.market_data[pos.ticker].loc[dt]
+            df = self.market_data[pos.ticker]
+            if dt in df.index:
+                bar = df.loc[dt]
+            else:
+                sub_df = df.loc[:dt]
+                if sub_df.empty:
+                    continue
+                bar = sub_df.iloc[-1]
+
             close = float(bar["close"])
             iv = max(0.20, float(bar.get("iv_proxy", 0.35)))
 
@@ -474,6 +492,10 @@ class HybridStrategyBacktester:
             "dte_guard_count": dte_guard_count,
             "stock_stats": stock_stats,
             "option_stats": option_stats,
+            "treasury_sweep_yield_total": round(self.total_treasury_yield, 2),
+            "treasury_sweep_symbol": self.cash_sweep_symbol,
+            "treasury_annual_rate": self.r,
             "curve_df": curve_df,
             "trades_df": trades_df
         }
+

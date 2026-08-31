@@ -207,11 +207,16 @@ async def main():
         current_regime = regime_engine.determine_regime(vix, hy_spread)
         strategy_weights = regime_engine.get_strategy_weights(current_regime)
 
+        # 查询国债/货币基金自动清扫持仓 (SGOV)
+        sgov_pos = exec_client.get_treasury_sweep_position("SGOV")
+        sgov_val = sgov_pos["market_value"] if sgov_pos else 0.0
+
         # 打印账户与市场宏观状态看板
         status_table = Table(title="账户与宏观状态总览", border_style="cyan")
         status_table.add_column("账户总净值 (Equity)", justify="right", style="green")
         status_table.add_column("可用购买力 (Buying Power)", justify="right")
         status_table.add_column("现金余额 (Cash)", justify="right")
+        status_table.add_column("国债理财 (SGOV)", justify="right", style="yellow")
         status_table.add_column("当日盈亏比例", justify="right")
         status_table.add_column("VIX 指数", justify="center")
         status_table.add_column("高收益利差", justify="center")
@@ -222,12 +227,14 @@ async def main():
             f"${total_equity:,.2f}",
             f"${buying_power:,.2f}",
             f"${cash:,.2f}",
+            f"${sgov_val:,.2f} (~4.5% p.a.)",
             f"[{pnl_color}]{day_pnl_pct:+.2%}[/{pnl_color}]",
             str(vix),
             f"{hy_spread}%",
             current_regime
         )
         console.print(status_table)
+
 
         # 4. 加载 S&P 500 标的池并拉取实时行情展示
         console.print(f"\n[bold blue][*] 正在从标的池 (共 {len(universe_tickers)} 支标的) 获取最新市场快照...[/bold blue]")
@@ -408,6 +415,12 @@ async def main():
             )
 
             if passed:
+                # 若现金不足以支付订单金额，自动从国债理财 (SGOV) 赎回变现释放资金
+                if cash < order_amount:
+                    freed = exec_client.release_cash_from_treasury(order_amount)
+                    if freed > 0:
+                        console.print(f"[bold cyan]已从 SGOV 国债理财自动变现释放约 ${freed:,.2f} 现金[/bold cyan]")
+
                 if memo.asset_type == "OPTION":
                     console.print(
                         f"[bold green][√] 硬风控通过！向 Alpaca 下发期权限价单: 买入 {final_contracts} 张 {memo.contract_symbol} @ ${memo.premium_per_share:.2f}[/bold green]"
@@ -442,6 +455,17 @@ async def main():
                         }
                     }
                     f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+                # 触发多余闲置资金自动清扫至国债/货币基金
+                try:
+                    sweep_result = exec_client.sweep_idle_cash_to_treasury()
+                    if sweep_result:
+                        console.print(
+                            f"[bold yellow]💰 [闲置资金清扫] 剩余现金已自动买入 {sweep_result['symbol']} "
+                            f"{sweep_result['shares']} 股 (年化收益率 ~4.5%)[/bold yellow]"
+                        )
+                except Exception:
+                    pass
             else:
                 console.print(f"[bold red][!] 硬风控拦截，订单被拒绝: {'; '.join(rejections)}[/bold red]")
 
