@@ -1,3 +1,5 @@
+from langsmith._openapi_client.types import run_select_field
+from typing import Any, Dict, Optional
 import logging
 import yaml
 from alpaca.data.enums import DataFeed
@@ -7,6 +9,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 from alpaca.trading.requests import (
     MarketOrderRequest,
+    LimitOrderRequest,
     StopLossRequest,
     TakeProfitRequest,
 )
@@ -20,7 +23,7 @@ with open("config/settings.yaml", "r", encoding="utf-8") as f:
 class AlpacaGateway:
     """Gateway interface for interacting with Alpaca Trading & Market Data APIs."""
 
-    def __init__(self, api_key: str = None, secret_key: str = None, paper: bool = None):
+    def __init__(self, api_key: Optional[str] = None, secret_key: Optional[str] = None, paper: Optional[bool] = None):
         key = api_key or config.get("alpaca", {}).get("api_key")
         secret = secret_key or config.get("alpaca", {}).get("secret_key")
         is_paper = paper if paper is not None else config.get("alpaca", {}).get("paper", True)
@@ -30,6 +33,7 @@ class AlpacaGateway:
             secret_key=secret,
             paper=is_paper,
         )
+        self.client = self.trading_client
         self.data_client = StockHistoricalDataClient(
             api_key=key,
             secret_key=secret,
@@ -74,30 +78,53 @@ class AlpacaGateway:
         """Liquidate and close an open position for a given symbol."""
         return self.trading_client.close_position(symbol_or_asset_id=symbol)
 
-    def get_account_summary(self):
+
+    def get_account_summary(self) -> Dict[str, float]:
+        """Retrieve key account metrics."""
         account = self.trading_client.get_account()
+        equity = float(account.equity)
+        last_equity = float(account.last_equity) if account.last_equity else equity
         return {
-            "total_equity": float(account.equity),  # 总权益
-            "buying_power": float(account.buying_power),  # 购买力
-            "cash": float(account.cash),  # 现金
-            "day_pnl_pct": (float(account.equity) - float(account.last_equity)) / float(account.last_equity) if float(account.last_equity) else 0.0 #当日盈亏百分比
+            "total_equity": equity,
+            "buying_power": float(account.buying_power),
+            "options_buying_power": float(getattr(account, "options_buying_power", account.buying_power)),
+            "cash": float(account.cash),
+            "day_pnl_pct": (equity - last_equity) / last_equity if last_equity > 0 else 0.0,
         }
 
     def place_bracket_oco_order(self, ticker: str, shares: int, take_profit_price: float, stop_loss_price: float):
         """提交 OCO (市价入场 + GTC 止盈止损)"""
         req = MarketOrderRequest(
-            symbol=ticker,  # 股票代码
-            qty=shares,  # 股数
-            side=OrderSide.BUY,  # 买入
-            time_in_force=TimeInForce.DAY,  # 日间委托
-            order_class=OrderClass.BRACKET,  # 括号订单
-            take_profit=TakeProfitRequest(limit_price=take_profit_price),  # 止盈价
-            stop_loss=StopLossRequest(stop_price=stop_loss_price)  # 止损价
+            symbol=ticker,
+            qty=shares,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY,
+            order_class=OrderClass.BRACKET,
+            take_profit=TakeProfitRequest(limit_price=take_profit_price),
+            stop_loss=StopLossRequest(stop_price=stop_loss_price)
         )
-        order = self.trading_client.submit_order(order_data=req)
-        logger.info(f"Bracket OCO 下单成功: Symbol={ticker}, ID={order.id}")
+        order = self.client.submit_order(order_data=req)
+        logger.info(f"正股 Bracket OCO 订单提交成功: Symbol={ticker}, OrderID={order.id}")
         return str(order.id)
 
+    def place_option_limit_order(
+        self,
+        contract_symbol: str,
+        contracts: int,
+        limit_price: float,
+        side: OrderSide = OrderSide.BUY
+    ) -> str:
+        """提交期权限价单 (Limit Order @ Mid Price 防止流动性冲击)"""
+        req = LimitOrderRequest(
+            symbol=contract_symbol,  # 期权合约代码
+            qty=contracts,  # 合约份数
+            side=side,  # 买入或卖出
+            time_in_force=TimeInForce.DAY, #设置订单的有效期限为当日有效
+            limit_price=limit_price #期权订单的限价（买入期权）或止损价（卖出期权）
+        )
+        order = self.client.submit_order(order_data=req)
+        logger.info(f"期权限价单提交成功: Contract={contract_symbol}, Qty={contracts}, Price=${limit_price:.2f}, OrderID={order.id}")
+        return str(order.id)
 
 # Alias for backward/forward compatibility
-AlpacaExecutionClient = AlpacaGateway
+AlpacaExecutionClient = AlpacaGateway

@@ -8,5 +8,18 @@
     "TSLA": "Consumer Discretionary",
     "JPM": "Financials",
     "V": "Financials",
-    "LLY": "Healthcare"
+    "LLY": "Healthcare",
+    "AXP": "Financials",
+    "ABBV": "Healthcare",
+    "COST": "Consumer Staples",
+    "AVGO": "Technology",
+    "CSCO": "Technology",
+    "PEP": "Consumer Staples",
+    "TMUS": "Communication Services",
+    "TMO": "Healthcare",
+    "KO": "Consumer Staples",
+    "PFE": "Healthcare",
+    "COIN": "Technology",
+    "INTC": "Technology",
+    "ORCL": "Technology"
 }

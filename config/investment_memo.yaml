@@ -1,8 +1,12 @@
 critic_rules:
   universe: "S&P 500"
   max_leverage: 1.0
-  max_single_position_pct: 0.10
-  earnings_blackout_days: 7
+  max_single_position_pct: 0.30 # 单仓硬上限 30%
+  max_option_cost_pct: 0.020     # 期权单笔权利金上限 2.0%
+  max_total_options_pct: 0.100   # 账户总期权权利金敞口上限 10.0%
+  min_option_dte: 14             # 期权最小到期天数 (禁止 0DTE)
+  max_option_dte: 60             # 期权最大到期天数
+  earnings_blackout_days: 7 #7 天内有二元财报禁止开仓
   required_fields:
     - proposal_id
     - ticker
@@ -11,3 +15,7 @@ critic_rules:
     - take_profit_price
     - stop_loss_price
     - consensus_score
+  allowed_option_types:
+    - "LONG_CALL"
+    - "LONG_PUT"
+    - "VERTICAL_SPREAD"

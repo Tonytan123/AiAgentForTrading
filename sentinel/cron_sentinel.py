@@ -1,9 +1,10 @@
 """
 sentinel/cron_sentinel.py
-15 分钟定时巡检与持仓守护引擎 (15-Min Cron Sentinel)
+15 分钟定时巡检与持仓守护引擎 (15-Min Cron Sentinel: 正股与期权临期平仓健康守护)
 """
 
 import os
+import re
 import time
 import json
 import logging
@@ -17,9 +18,9 @@ from alpaca.trading.requests import (
     OrderSide,
     TimeInForce,
     LimitOrderRequest,
-    StopOrderRequest
+    StopOrderRequest,
 )
-from alpaca.trading.enums import QueryOrderStatus, OrderClass
+from alpaca.trading.enums import QueryOrderStatus, OrderClass, AssetClass
 
 # ==========================================
 # 1. 日志与审计系统配置
@@ -32,7 +33,7 @@ if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_formatter = logging.Formatter(
         "[%(asctime)s] [%(levelname)s] [Sentinel] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
@@ -48,7 +49,7 @@ def record_audit_log(event_type: str, payload: Dict[str, Any]) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "module": "CronSentinel",
             "event_type": event_type,
-            "data": payload
+            "data": payload,
         }
         with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
@@ -57,28 +58,31 @@ def record_audit_log(event_type: str, payload: Dict[str, Any]) -> None:
 
 
 # ==========================================
-# 2. 15 分钟持仓守护类实现
+# 2. 15 分钟持仓与期权守护类实现
 # ==========================================
 
 class CronSentinel:
     """
-    15 分钟持仓守护巡检引擎:
-    - 检查全账户持仓及关联挂单
-    - 孤儿持仓对冲 (自动补齐 TP: +8.0%, SL: -4.0% 保护单)
-    - 超时持仓强制平仓 (最大持有期 28 天)
-    - 异常捕获与全流程不可变审计
+    15 分钟持仓与期权临期平仓守护引擎:
+    - 检查全账户正股与期权持仓及关联挂单
+    - 期权持仓健康巡检：检查 DTE 是否 <= 2 天，触发临期强制市价平仓以规避行权交割风险
+    - 孤儿持仓对冲：自动补齐 TP (+10%)、SL (-5%) 保护单
+    - 超时持仓强制平仓 (最大持有期 180 天)
+    - 异常捕获与全流程不可变审计追踪
     """
 
     def __init__(
         self,
         trading_client: TradingClient,
-        max_holding_days: int = 180, # 最大持仓时间 6个月
-        default_tp_pct: float = 0.1,   # 止盈 10%
-        default_sl_pct: float = 0.05,   # 止损 5%
-        check_interval_seconds: int = 900 # 15 分钟
+        max_holding_days: int = 180,  # 最大持仓时间 6个月 (正股超时平仓)
+        max_option_dte_close: int = 2,  # 期权临期平仓天数 (DTE <= 2)
+        default_tp_pct: float = 0.10,  # 止盈 10%
+        default_sl_pct: float = 0.05,  # 止损 5%
+        check_interval_seconds: int = 900,  # 15 分钟
     ):
         self.trading_client = trading_client
         self.max_holding_days = max_holding_days
+        self.max_option_dte_close = max_option_dte_close
         self.default_tp_pct = default_tp_pct
         self.default_sl_pct = default_sl_pct
         self.interval = check_interval_seconds
@@ -86,12 +90,14 @@ class CronSentinel:
 
     def inspect_and_heal(self) -> Dict[str, Any]:
         """执行单次巡检与自我修复核心逻辑"""
-        logger.info("========== 开始执行 15 分钟持仓与挂单守护巡检 ==========")
+        logger.info("[Sentinel] 开始执行 15 分钟正股与期权持仓健康巡检...")
         stats = {
+            "status": "SUCCESS",
             "positions_checked": 0,
             "orphan_positions_healed": 0,
             "expired_positions_closed": 0,
-            "errors": []
+            "near_expiration_options_closed": 0,
+            "errors": [],
         }
 
         try:
@@ -103,10 +109,10 @@ class CronSentinel:
             # 2. 获取所有打开状态的挂单
             open_orders_req = GetOrdersRequest(
                 status=QueryOrderStatus.OPEN,
-                limit=500
+                limit=500,
             )
             open_orders = self.trading_client.get_orders(filter=open_orders_req)
-            
+
             # 按标的代码分类挂单 (symbol -> List[Order])
             orders_by_symbol: Dict[str, List[Any]] = {}
             for order in open_orders:
@@ -119,17 +125,55 @@ class CronSentinel:
                 symbol = pos.symbol
                 qty = float(pos.qty)
                 avg_entry_price = float(pos.avg_entry_price)
-                current_price = float(pos.current_price)
+                current_price = float(getattr(pos, "current_price", avg_entry_price))
+                asset_class = getattr(pos, "asset_class", "us_equity")
 
-                logger.info(f"正在巡检标的: {symbol} | 持仓股数: {qty} | 成本均价: ${avg_entry_price:.2f}")
+                logger.info(
+                    f"正在巡检标的: {symbol} | 资产类别: {asset_class} | 持仓数量: {qty} | 成本均价: ${avg_entry_price:.2f}"
+                )
 
                 # ----------------------------------------------------
-                # 检查 A: 超时平仓检查 (Max Holding Period: 28 Days)
+                # 检查 1: 期权持仓检查 (DTE <= 2 天，触发临期强制市价平仓)
                 # ----------------------------------------------------
-                # Alpaca position 可能不直接提供开仓时间，使用 fallback 或计算天数
-                # 若无明确开仓时间戳，可通过关联订单记录或历史 trades 计算，此处安全读取
+                is_option = (
+                    asset_class == AssetClass.US_OPTION
+                    or asset_class == "us_option"
+                    or len(symbol) > 10
+                )
+
+                if is_option:
+                    try:
+                        # 解析 OCC 合约代码到期日 (如 NVDA260918C00130000 -> 2026-09-18)
+                        occ_match = re.match(r"^([A-Za-z]+)(\d{6})([CPcp])(\d{8})$", symbol)
+                        if occ_match:
+                            exp_str = occ_match.group(2)
+                        else:
+                            exp_str = symbol[len(symbol.rstrip("0123456789CPcp").rstrip("CPcp")):][:6]
+
+                        exp_date = datetime.strptime(exp_str, "%y%m%d").replace(tzinfo=timezone.utc)
+                        dte = (exp_date - now_utc).days
+
+                        if dte <= self.max_option_dte_close:
+                            logger.warning(
+                                f"[期权临期平仓] 合约 {symbol} DTE={dte} 天 <= {self.max_option_dte_close} 天，强制市价平仓以规避交割风险！"
+                            )
+                            self._liquidate_position(
+                                symbol, qty, reason=f"期权临期强制平仓 (DTE={dte}天 <= {self.max_option_dte_close}天)"
+                            )
+                            stats["near_expiration_options_closed"] += 1
+                            continue
+                        else:
+                            logger.info(
+                                f"[期权健康] 合约 {symbol} 距到期日 {exp_date.strftime('%Y-%m-%d')} 还有 {dte} 天 (DTE > {self.max_option_dte_close})。"
+                            )
+                    except Exception as e:
+                        logger.error(f"解析期权合约 {symbol} 到期日失败: {e}", exc_info=True)
+                        stats["errors"].append(f"解析期权 {symbol} 到期日异常: {e}")
+
+                # ----------------------------------------------------
+                # 检查 2: 超时平仓检查 (正股 Max Holding Period: 180 Days)
+                # ----------------------------------------------------
                 is_expired = False
-                # 模拟/安全时间戳比对
                 entry_time = getattr(pos, "created_at", None)
                 if entry_time:
                     holding_duration = now_utc - entry_time
@@ -143,40 +187,39 @@ class CronSentinel:
                 if is_expired:
                     self._liquidate_position(symbol, qty, reason=f"持有超过 {self.max_holding_days} 天")
                     stats["expired_positions_closed"] += 1
-                    continue # 已平仓标的跳过后续 OCO 检查
+                    continue
 
                 # ----------------------------------------------------
-                # 检查 B: 孤儿持仓检查 (是否有对应挂单保护)
+                # 检查 3: 孤儿持仓检查 (正股是否有对应挂单保护)
                 # ----------------------------------------------------
-                related_orders = orders_by_symbol.get(symbol, [])
-                has_tp_order = False #是否有止盈单
-                has_sl_order = False #是否有止损单
+                if not is_option:
+                    related_orders = orders_by_symbol.get(symbol, [])
+                    has_tp_order = False
+                    has_sl_order = False
 
-                for order in related_orders:
-                    # 检查针对多头持仓的卖出保护单 (OrderSide.SELL)
-                    if order.side == OrderSide.SELL:
-                        if order.order_type in ["limit", "stop_limit"] and float(order.limit_price or 0) > avg_entry_price:
-                            has_tp_order = True
-                        if order.order_type in ["stop", "stop_limit"] and float(order.stop_price or 0) < avg_entry_price:
-                            has_sl_order = True
+                    for order in related_orders:
+                        if order.side == OrderSide.SELL:
+                            if order.order_type in ["limit", "stop_limit"] and float(order.limit_price or 0) > avg_entry_price:
+                                has_tp_order = True
+                            if order.order_type in ["stop", "stop_limit"] and float(order.stop_price or 0) < avg_entry_price:
+                                has_sl_order = True
 
-                # 如果缺少保护挂单，判定为孤儿持仓，补齐 TP/SL
-                if not (has_tp_order and has_sl_order):
-                    logger.warning(
-                        f"[孤儿持仓警报] 标的 {symbol} 缺少完整保护挂单 "
-                        f"(TP挂单: {'存在' if has_tp_order else '缺失'}, "
-                        f"SL挂单: {'存在' if has_sl_order else '缺失'})，正在自动补齐..."
-                    )
-                    self._heal_orphan_position(
-                        symbol=symbol,
-                        qty=int(qty),
-                        avg_price=avg_entry_price,
-                        missing_tp=not has_tp_order,
-                        missing_sl=not has_sl_order
-                    )
-                    stats["orphan_positions_healed"] += 1
-                else:
-                    logger.info(f"[健康] 标的 {symbol} 具备完整 TP/SL 挂单保护。")
+                    if not (has_tp_order and has_sl_order):
+                        logger.warning(
+                            f"[孤儿持仓警报] 标的 {symbol} 缺少完整保护挂单 "
+                            f"(TP挂单: {'存在' if has_tp_order else '缺失'}, "
+                            f"SL挂单: {'存在' if has_sl_order else '缺失'})，正在自动补齐..."
+                        )
+                        self._heal_orphan_position(
+                            symbol=symbol,
+                            qty=int(qty),
+                            avg_price=avg_entry_price,
+                            missing_tp=not has_tp_order,
+                            missing_sl=not has_sl_order,
+                        )
+                        stats["orphan_positions_healed"] += 1
+                    else:
+                        logger.info(f"[健康] 标的 {symbol} 具备完整 TP/SL 挂单保护。")
 
             logger.info("========== 15 分钟守护巡检执行完毕 ==========")
             record_audit_log("SENTINEL_INSPECT_SUCCESS", stats)
@@ -185,10 +228,11 @@ class CronSentinel:
             err_msg = f"巡检守护执行过程中发生严重异常: {str(e)}"
             logger.critical(err_msg)
             logger.error(traceback.format_exc())
+            stats["status"] = "ERROR"
             stats["errors"].append(err_msg)
             record_audit_log("SENTINEL_INSPECT_ERROR", {
                 "error": str(e),
-                "traceback": traceback.format_exc()
+                "traceback": traceback.format_exc(),
             })
 
         return stats
@@ -199,7 +243,7 @@ class CronSentinel:
         qty: int,
         avg_price: float,
         missing_tp: bool,
-        missing_sl: bool
+        missing_sl: bool,
     ) -> None:
         """为孤儿持仓补发止盈与止损挂单"""
         tp_price = round(avg_price * (1.0 + self.default_tp_pct), 2)
@@ -213,7 +257,7 @@ class CronSentinel:
                     qty=qty,
                     side=OrderSide.SELL,
                     time_in_force=TimeInForce.GTC,
-                    limit_price=tp_price
+                    limit_price=tp_price,
                 )
                 tp_res = self.trading_client.submit_order(tp_req)
                 logger.info(f"已补发止盈单: {symbol} @ ${tp_price:.2f} (OrderID: {tp_res.id})")
@@ -221,7 +265,7 @@ class CronSentinel:
                     "symbol": symbol,
                     "order_id": str(tp_res.id),
                     "limit_price": tp_price,
-                    "qty": qty
+                    "qty": qty,
                 })
 
             # 补发止损单 (Stop Order GTC)
@@ -231,7 +275,7 @@ class CronSentinel:
                     qty=qty,
                     side=OrderSide.SELL,
                     time_in_force=TimeInForce.GTC,
-                    stop_price=sl_price
+                    stop_price=sl_price,
                 )
                 sl_res = self.trading_client.submit_order(sl_req)
                 logger.info(f"已补发止损单: {symbol} @ ${sl_price:.2f} (OrderID: {sl_res.id})")
@@ -239,14 +283,14 @@ class CronSentinel:
                     "symbol": symbol,
                     "order_id": str(sl_res.id),
                     "stop_price": sl_price,
-                    "qty": qty
+                    "qty": qty,
                 })
 
         except Exception as e:
             logger.error(f"为孤儿持仓 {symbol} 补发保护订单失败: {e}", exc_info=True)
             record_audit_log("ORPHAN_HEAL_FAILED", {
                 "symbol": symbol,
-                "error": str(e)
+                "error": str(e),
             })
 
     def _liquidate_position(self, symbol: str, qty: float, reason: str) -> None:
@@ -259,13 +303,13 @@ class CronSentinel:
             record_audit_log("POSITION_LIQUIDATED", {
                 "symbol": symbol,
                 "qty": qty,
-                "reason": reason
+                "reason": reason,
             })
         except Exception as e:
             logger.error(f"清空标的 {symbol} 持仓失败: {e}", exc_info=True)
             record_audit_log("POSITION_LIQUIDATE_FAILED", {
                 "symbol": symbol,
-                "error": str(e)
+                "error": str(e),
             })
 
     def run_daemon(self) -> None:
