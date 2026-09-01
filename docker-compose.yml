@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # 1. 交互式交易终端 (CLI Terminal - 支持人机审批与参数微调)
+  trader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiagentfortrading:latest
+    container_name: aiagent_trader
+    stdin_open: true  # 保持标准输入打开
+    tty: true         # 启用伪终端支持 Rich 富文本渲染
+    environment:
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - FEATHERLESS_API_KEY=${FEATHERLESS_API_KEY}
+      - FRED_API_KEY=${FRED_API_KEY}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    command: ["python", "main.py"]
+
+  # 2. 混合策略历史回测引擎 (Backtest Engine)
+  backtest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiagentfortrading:latest
+    container_name: aiagent_backtest
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    command: ["python", "run_backtest.py"]
+
+  # 3. 15 分钟持仓健康巡检与期权临期平仓守护常驻进程 (Sentinel Daemon)
+  sentinel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiagentfortrading:latest
+    container_name: aiagent_sentinel
+    restart: unless-stopped
+    environment:
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    command: [
+      "python", "-c",
+      "from sentinel.cron_sentinel import CronSentinel; from alpaca.trading.client import TradingClient; import yaml; cfg=yaml.safe_load(open('config/settings.yaml')); sentinel=CronSentinel(TradingClient(cfg['alpaca']['api_key'], cfg['alpaca']['secret_key'], paper=cfg['alpaca'].get('paper', True))); sentinel.run_daemon()"
+    ]
+
+  # 4. 自动化测试套件执行器 (Test Suite Runner)
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiagentfortrading:latest
+    container_name: aiagent_test
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    command: ["pytest", "tests/"]

@@ -19,6 +19,7 @@ from alpaca.trading.requests import (
     TimeInForce,
     LimitOrderRequest,
     StopOrderRequest,
+    MarketOrderRequest,
 )
 from alpaca.trading.enums import QueryOrderStatus, OrderClass, AssetClass
 
@@ -67,6 +68,7 @@ class CronSentinel:
     - 检查全账户正股与期权持仓及关联挂单
     - 期权持仓健康巡检：检查 DTE 是否 <= 2 天，触发临期强制市价平仓以规避行权交割风险
     - 孤儿持仓对冲：自动补齐 TP (+10%)、SL (-5%) 保护单
+    - 闲置现金自动清扫：每日将超额闲置现金买入低风险超短期国债 ETF (SGOV, 年化 ~4.5%)
     - 超时持仓强制平仓 (最大持有期 180 天)
     - 异常捕获与全流程不可变审计追踪
     """
@@ -79,6 +81,9 @@ class CronSentinel:
         default_tp_pct: float = 0.10,  # 止盈 10%
         default_sl_pct: float = 0.05,  # 止损 5%
         check_interval_seconds: int = 900,  # 15 分钟
+        auto_sweep: bool = True,  # 自动将闲置资金买入国债 ETF (SGOV)
+        sweep_symbol: str = "SGOV",
+        reserve_cash: float = 500.0,
     ):
         self.trading_client = trading_client
         self.max_holding_days = max_holding_days
@@ -86,6 +91,9 @@ class CronSentinel:
         self.default_tp_pct = default_tp_pct
         self.default_sl_pct = default_sl_pct
         self.interval = check_interval_seconds
+        self.auto_sweep = auto_sweep
+        self.sweep_symbol = sweep_symbol
+        self.reserve_cash = reserve_cash
         self._is_running = False
 
     def inspect_and_heal(self) -> Dict[str, Any]:
@@ -221,6 +229,14 @@ class CronSentinel:
                     else:
                         logger.info(f"[健康] 标的 {symbol} 具备完整 TP/SL 挂单保护。")
 
+            # ----------------------------------------------------
+            # 检查 4: 闲置资金自动清扫至低风险国债 ETF (SGOV)
+            # ----------------------------------------------------
+            if self.auto_sweep:
+                sweep_res = self._sweep_idle_cash()
+                if sweep_res:
+                    stats["treasury_sweep"] = sweep_res
+
             logger.info("========== 15 分钟守护巡检执行完毕 ==========")
             record_audit_log("SENTINEL_INSPECT_SUCCESS", stats)
 
@@ -311,6 +327,53 @@ class CronSentinel:
                 "symbol": symbol,
                 "error": str(e),
             })
+
+    def _sweep_idle_cash(self) -> Optional[Dict[str, Any]]:
+        """将账户多余闲置现金自动配置买入超短期国债 ETF (SGOV)"""
+        try:
+            account = self.trading_client.get_account()
+            cash = float(account.cash)
+            idle_cash = cash - self.reserve_cash
+
+            if idle_cash < 100.0:
+                logger.info(f"[Sentinel Cash Sweep] 闲置现金 ${idle_cash:.2f} 低于单股起投阈值，暂不执行清扫。")
+                return None
+
+            # 获取当前 SGOV 价格估计
+            est_price = 100.50
+            shares = int(idle_cash // est_price)
+            if shares <= 0:
+                return None
+
+            req = MarketOrderRequest(
+                symbol=self.sweep_symbol,
+                qty=shares,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+            )
+            order = self.trading_client.submit_order(req)
+            est_cost = shares * est_price
+            logger.info(
+                f"[Sentinel Cash Sweep 成功] 闲置资金买入国债 ETF: {self.sweep_symbol} x {shares} 股, "
+                f"预估金额: ${est_cost:,.2f}, OrderID: {order.id}"
+            )
+            record_audit_log("TREASURY_SWEEP_EXECUTED", {
+                "symbol": self.sweep_symbol,
+                "shares": shares,
+                "est_cost": est_cost,
+                "order_id": str(order.id),
+                "remaining_cash": cash - est_cost,
+            })
+            return {
+                "symbol": self.sweep_symbol,
+                "shares": shares,
+                "est_cost": est_cost,
+                "order_id": str(order.id),
+            }
+        except Exception as e:
+            logger.error(f"[Sentinel Cash Sweep 失败] 闲置资金清扫异常: {e}", exc_info=True)
+            record_audit_log("TREASURY_SWEEP_FAILED", {"error": str(e)})
+            return None
 
     def run_daemon(self) -> None:
         """常驻守护进程入口（用于后台独立线程或子进程运行）"""

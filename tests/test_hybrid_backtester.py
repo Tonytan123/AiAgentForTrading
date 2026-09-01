@@ -439,3 +439,45 @@ def test_performance_metrics_and_sub_asset_breakdown():
     assert isinstance(curve_df, pd.DataFrame)
     assert len(curve_df) == n_days
     assert "equity" in curve_df.columns
+    assert "treasury_sweep_yield_total" in metrics
+    assert metrics["treasury_sweep_yield_total"] > 0
+    assert metrics["treasury_sweep_symbol"] == "SGOV"
+
+
+def test_treasury_cash_sweep_yield_accumulation():
+    """测试闲置现金每日自动配置低风险国债/货基 ETF (SGOV) 产生稳健利息累计"""
+    dates = pd.date_range("2025-08-01", periods=10, freq="B")
+    vix = pd.Series(15.0, index=dates)
+
+    # 构造无交易信号的稳定行情数据，使资金保持闲置
+    df = pd.DataFrame(
+        {
+            "close": [100.0] * 10,
+            "high": [100.0] * 10,
+            "low": [100.0] * 10,
+            "volume": [100000] * 10,
+            "rsi": [50.0] * 10,  # 无开仓信号
+            "sma_20": [100.0] * 10,
+            "vol_surge": [1.0] * 10,
+            "iv_proxy": [0.25] * 10,
+            "days_to_earnings": [30] * 10,
+        },
+        index=dates,
+    )
+
+    tester = HybridStrategyBacktester(
+        market_data={"KO": df},
+        vix_series=vix,
+        initial_equity=100000.0,
+        risk_free_rate=0.045,
+        cash_sweep_enabled=True,
+        cash_sweep_symbol="SGOV",
+    )
+    metrics = tester.run()
+
+    # 10 个交易日，100k 资金按年化 4.5% 每日计息，累计利息收益应 > 0
+    assert metrics["treasury_sweep_yield_total"] > 100.0
+    assert metrics["final_equity"] > 100000.0
+    assert metrics["treasury_sweep_symbol"] == "SGOV"
+    assert metrics["total_trades"] == 0  # 无股票期权交易，纯由 SGOV 国债利息增值
+

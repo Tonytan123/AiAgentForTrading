@@ -134,3 +134,68 @@ class TestAlpacaGatewayMock:
 
         mock_instance.close_position.assert_called_once_with(symbol_or_asset_id="AAPL")
         assert res["symbol"] == "AAPL"
+
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_sweep_idle_cash_to_treasury(self, mock_data_client, mock_trading_client):
+        """测试闲置现金自动清扫买入国债 ETF (SGOV)"""
+        mock_acc = MagicMock()
+        mock_acc.equity = "100000.0"
+        mock_acc.buying_power = "200000.0"
+        mock_acc.cash = "5500.0"
+        mock_acc.last_equity = "100000.0"
+
+        mock_instance = MagicMock()
+        mock_instance.get_account.return_value = mock_acc
+
+        mock_order = MagicMock()
+        mock_order.id = "sweep-order-001"
+        mock_instance.submit_order.return_value = mock_order
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        # Mock 获取当前 SGOV 价格为 100.0
+        gateway.get_current_price = MagicMock(return_value=100.0)
+
+        # 现金 5500，保留 500，闲置 5000 -> 买入 50 股 SGOV
+        res = gateway.sweep_idle_cash_to_treasury(symbol="SGOV", reserve_cash=500.0)
+        assert res is not None
+        assert res["shares"] == 50
+        assert res["cost"] == 5000.0
+        assert res["symbol"] == "SGOV"
+        mock_instance.submit_order.assert_called_once()
+
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_release_cash_from_treasury(self, mock_data_client, mock_trading_client):
+        """测试资金不足时自动卖出 SGOV 释放现金"""
+        mock_acc = MagicMock()
+        mock_acc.equity = "100000.0"
+        mock_acc.buying_power = "200000.0"
+        mock_acc.cash = "1000.0"
+        mock_acc.last_equity = "100000.0"
+
+        mock_pos = MagicMock()
+        mock_pos.symbol = "SGOV"
+        mock_pos.qty = "100"
+        mock_pos.market_value = "10050.0"
+        mock_pos.current_price = "100.50"
+        mock_pos.unrealized_pl = "10.0"
+
+        mock_instance = MagicMock()
+        mock_instance.get_account.return_value = mock_acc
+        mock_instance.get_open_position.return_value = mock_pos
+
+        mock_order = MagicMock()
+        mock_order.id = "release-order-001"
+        mock_instance.submit_order.return_value = mock_order
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        gateway.get_current_price = MagicMock(return_value=100.0)
+
+        # 需要 3000 现金，当前只有 1000 -> 缺口 2000 -> 卖出 20 股 SGOV
+        freed = gateway.release_cash_from_treasury(required_cash=3000.0, symbol="SGOV")
+        assert freed == 2000.0
+        mock_instance.submit_order.assert_called_once()
+

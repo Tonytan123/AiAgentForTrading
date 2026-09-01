@@ -129,6 +129,8 @@ if __name__ == "__main__":
         option_budget_pct=cfg.option_budget_pct,
         stock_timeout_days=cfg.stock_timeout_days,
         dte_guard_threshold=cfg.dte_guard_threshold,
+        cash_sweep_enabled=cfg.cash_sweep_enabled,
+        cash_sweep_symbol=cfg.cash_sweep_symbol,
     )
     results = tester.run()
 
@@ -145,7 +147,17 @@ if __name__ == "__main__":
     print(f"Combined Win Rate:          {results['win_rate']:.2%}")
     print(f"Combined P/L Ratio:         {results['profit_loss_ratio']:.2f}")
 
-    # 2. 打印分品种独立表现对比 (Stock vs Option Breakdown)
+    # 2. 打印闲置资金国债/货币基金自动清扫收益 (Cash Sweep / Treasury Yield)
+    treasury_yield_total = results.get("treasury_sweep_yield_total", 0.0)
+    treasury_sym = results.get("treasury_sweep_symbol", "SGOV")
+    treasury_rate = results.get("treasury_annual_rate", 0.045)
+    print("\n" + "-" * 26 + " [CASH MANAGEMENT & TREASURY SWEEP YIELD] " + "-" * 26)
+    print(f"Sweep Vehicle (Asset):      {treasury_sym} (iShares 0-3M Treasury Bond ETF / MMF)")
+    print(f"Annualized Yield (Rate):    {treasury_rate:.2%}")
+    print(f"Total Interest Earned:      ${treasury_yield_total:,.2f}")
+    print("-" * 80)
+
+    # 3. 打印分品种独立表现对比 (Stock vs Option Breakdown)
     stock_st = results["stock_stats"]
     opt_st = results["option_stats"]
 
@@ -159,7 +171,7 @@ if __name__ == "__main__":
     print(f"{'Avg Win / Avg Loss':<25} | ${stock_st['avg_win']:,.0f} / ${stock_st['avg_loss']:,.0f}      | ${opt_st['avg_win']:,.0f} / ${opt_st['avg_loss']:,.0f}")
     print("-" * 80)
 
-    # 3. 打印出场原因分布
+    # 4. 打印出场原因分布
     trades_df = results["trades_df"]
     if not trades_df.empty:
         print("\n" + "-" * 32 + " [TRADE EXIT REASON BREAKDOWN] " + "-" * 32)

@@ -195,6 +195,56 @@ uv run pytest tests/
 
 ---
 
+## 🐳 Docker 容器化部署与运行
+
+本项目已完整配置轻量化生产级 `Dockerfile` 与 `docker-compose.yml`，支持通过 Docker 或 Docker Compose 在任意容器环境中一键运行。
+
+### 1. 构建 Docker 镜像
+
+```bash
+docker build -t aiagentfortrading:latest .
+```
+
+### 2. 使用 Docker 一键运行各服务
+
+```bash
+# 启动交互式交易终端 (需保持 -it 输入与终端分配)
+docker run -it --rm \
+  -v ${PWD}/config:/app/config \
+  -v ${PWD}/logs:/app/logs \
+  -e ALPACA_API_KEY="你的KEY" \
+  -e ALPACA_SECRET_KEY="你的SECRET" \
+  -e FEATHERLESS_API_KEY="你的FEATHERLESS_KEY" \
+  aiagentfortrading:latest python main.py
+
+# 运行历史回测
+docker run --rm \
+  -v ${PWD}/config:/app/config \
+  -v ${PWD}/logs:/app/logs \
+  aiagentfortrading:latest python run_backtest.py
+
+# 运行全套测试
+docker run --rm aiagentfortrading:latest pytest tests/
+```
+
+### 3. 使用 Docker Compose 便捷调度
+
+```bash
+# 启动交互式交易终端
+docker compose run --rm trader
+
+# 启动历史策略回测
+docker compose run --rm backtest
+
+# 启动 15 分钟持仓与期权临期平仓后台守护进程
+docker compose up -d sentinel
+
+# 运行自动化测试
+docker compose run --rm test
+```
+
+---
+
 ## ⚙️ 核心风控规则速查
 
 | 风控规则 | 阈值标准 | 触发行为与说明 |
@@ -215,3 +265,4 @@ uv run pytest tests/
 ## 📜 许可证
 
 本项目采用 [MIT License](LICENSE) 许可证。
+
