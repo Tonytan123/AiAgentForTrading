@@ -40,6 +40,18 @@ def _safe_get(item: Any, attr: str, default: Any = None) -> Any:
     return getattr(item, attr, default)
 
 
+def _clean_enum_str(val: Any, default: str = "") -> str:
+    """安全提取 Enum 或字符串的纯文本描述"""
+    if val is None:
+        return default
+    if hasattr(val, "value"):
+        return str(val.value).upper()
+    s = str(val).strip()
+    if "." in s and not s.startswith("$"):
+        s = s.split(".")[-1]
+    return s.upper()
+
+
 def render_positions_table(positions: Optional[List[Any]] = None) -> Table:
     """
     构造当前实盘/模拟持仓详情表格 (Rich Table)
@@ -74,7 +86,7 @@ def render_positions_table(positions: Optional[List[Any]] = None) -> Table:
 
     for idx, pos in enumerate(positions, 1):
         symbol = str(_safe_get(pos, "symbol", "UNKNOWN"))
-        asset_class_raw = str(_safe_get(pos, "asset_class", "us_equity")).lower()
+        asset_class_raw = _clean_enum_str(_safe_get(pos, "asset_class", "us_equity")).lower()
         if "option" in asset_class_raw or len(symbol) > 10:
             asset_type_str = "[magenta]期权[/magenta]"
         elif symbol in ["SGOV", "BIL", "SHV", "USFR"]:
@@ -82,7 +94,7 @@ def render_positions_table(positions: Optional[List[Any]] = None) -> Table:
         else:
             asset_type_str = "[blue]正股[/blue]"
 
-        side_raw = str(_safe_get(pos, "side", "long")).upper()
+        side_raw = _clean_enum_str(_safe_get(pos, "side", "long"))
         if side_raw in ["LONG", "BUY"]:
             side_str = "[green]多 (LONG)[/green]"
         else:
@@ -176,13 +188,13 @@ def render_open_orders_table(orders: Optional[List[Any]] = None) -> Table:
 
         symbol = str(_safe_get(ord_item, "symbol", "UNKNOWN"))
 
-        side_raw = str(_safe_get(ord_item, "side", "buy")).upper()
+        side_raw = _clean_enum_str(_safe_get(ord_item, "side", "buy"))
         if "BUY" in side_raw:
             side_str = "[bold green]买入 (BUY)[/bold green]"
         else:
             side_str = "[bold red]卖出 (SELL)[/bold red]"
 
-        order_type = str(_safe_get(ord_item, "order_type", _safe_get(ord_item, "type", "LIMIT"))).upper()
+        order_type = _clean_enum_str(_safe_get(ord_item, "order_type", _safe_get(ord_item, "type", "LIMIT")))
 
         qty = _safe_float(_safe_get(ord_item, "qty", 0))
         filled_qty = _safe_float(_safe_get(ord_item, "filled_qty", 0))
@@ -202,9 +214,9 @@ def render_open_orders_table(orders: Optional[List[Any]] = None) -> Table:
             price_parts.append(f"止损: ${_safe_float(stop_price):.2f}")
         price_display = " / ".join(price_parts) if price_parts else "市价 (MKT)"
 
-        order_class = str(_safe_get(ord_item, "order_class", "simple")).upper()
-        status = str(_safe_get(ord_item, "status", "open")).upper()
-        tif = str(_safe_get(ord_item, "time_in_force", "DAY")).upper()
+        order_class = _clean_enum_str(_safe_get(ord_item, "order_class", "simple"))
+        status = _clean_enum_str(_safe_get(ord_item, "status", "open"))
+        tif = _clean_enum_str(_safe_get(ord_item, "time_in_force", "DAY"))
 
         # 时间格式化
         submitted_at_raw = _safe_get(ord_item, "submitted_at", _safe_get(ord_item, "created_at", ""))
