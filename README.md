@@ -2,7 +2,7 @@
 
 基于 **Alpaca API**、**LangGraph 多智能体协同状态图** 与 **大语言模型（LLM）** 的全流程量化交易决策、正股与垂直价差期权双轨执行、动态移动止盈止损及风险治理系统。
 
-系统集成了 **实时宏观体制检测（Market Regime）**、**5 大策略研究智能体并行辩论与共识**、**正股/垂直价差期权混合资产提案生成（Hybrid Memo / Bull Call Spread）**、**独立 Critic 审查**、**CLI 人机协同决策治理（Human-in-the-Loop）**、**确定性硬风控拦截（RiskGuard）**、**持仓与期权临期守护引擎（Sentinel）** 以及 **股票+期权多品种事件驱动回测引擎（HybridStrategyBacktester）**。
+系统集成了 **实时宏观体制检测（Market Regime）**、**5 大策略研究智能体并行辩论与共识**、**正股/垂直价差期权混合资产提案生成（Hybrid Memo / Bull Call Spread）**、**独立 Critic 审查**、**CLI 人机协同决策治理（Human-in-the-Loop）**、**确定性硬风控拦截（RiskGuard）**、**持仓与期权临期守护引擎（Sentinel）**、**日志双通道与3天生命周期清理** 以及 **股票+期权多品种事件驱动回测引擎（HybridStrategyBacktester）**。
 
 ---
 
@@ -22,14 +22,20 @@
   - **牛市看涨垂直价差策略（Bull Call Spread）**：自动构建买入低行权价 Call (Long Leg) + 卖出高行权价 Call (Short Leg)，压降权利金支出并规避波动率暴跌风险。
   - **智能资产路由**：支持 `AUTO`（智能权衡）、`EQUITY`（仅正股）与 `OPTION`（仅期权）。
   - **Black-Scholes 期权二元定价与希腊字母计算**：精确计算组合 Net Delta、Net Gamma、Net Theta 与 Net Vega。
+- **持仓详情与活动挂单终端富文本看板 (Positions & Open Orders Dashboard)**：
+  - **持仓看板**：清晰展示正股、期权与国债 ETF 的持仓数量、均价、市价、市值、当日涨跌、浮动盈亏（金额与比例红绿配色）及组合总汇总。
+  - **挂单看板**：清晰展示所有未成交订单的委托编号、标的代码、买卖方向、类型、委托量、已成交量、未成交量、限价/止损价、订单结构（OCO/Bracket）与状态。
+  - **交互快捷指令**：终端输入 `P` 随时刷新查看持仓；输入 `O` 随时刷新查看活动挂单。
+  - **单次命令行参数**：支持 `main.py -p`（持仓）、`main.py -o`（挂单）、`main.py -s`（全景看板）快速查询。
 - **双重风控防御与移动止盈保本体系**：
   - **Critic 独立合规审查**：校验标的池白名单、期权 DTE 周期约束 (14 ~ 60天)、权利金成本上限 (<=2.0%) 以及 7 天二元财报事件一票否决。
   - **确定性 Python 硬风控 (RiskGuard)**：不依赖 LLM，代码级拦截正股单仓上限 (10%)、期权单笔权利金 (2.0%)、期权总敞口 (10.0%)、板块集中度 (30%) 及日内浮亏熔断 (5%)。
   - **阶梯保本 / 移动止盈 (Trailing Stop & Break-Even Protection)**：期权浮盈达 +25% 时止损线上移至成本价（BE 0%），浮盈达 +40% 时止损线上移锁定 +15% 利润。
-- **持仓与期权临期守护引擎 (Sentinel)**：
+- **持仓巡检与期权临期守护引擎 (Cron Sentinel)**：
   - **Sentinel 临期平仓 (DTE Guard)**：期权持仓 `DTE <= 3` 天时自动市价平仓锁定剩余价差价值，彻底规避行权交割与末日流动性风险。
-  - **正股锚定止损**：正股跌破进场价支撑线 (-4%) 联动触发期权止损平仓。
-  - **孤儿持仓对冲**：定期巡检正股持仓，自动补齐缺失的止盈止损挂单。
+  - **孤儿持仓 OCO 自愈**：定时巡检正股持仓，自动清理单边残单并补发完整的 OCO（限价止盈 + 止损）双向挂单。
+  - **闲置资金智能清扫**：每日将多余闲置资金买入超短期国债 ETF (SGOV, 年化 ~4.5%)，动态适配可用购买力并自动防重。
+  - **日志双通道与 3 天自动清理**：控制台与 `logs/sentinel.log` 文件同步输出（UTF-8 编码），每日零点自动轮转，并自动扫描清理超过 3 天的历史过期日志。
 - **混合策略历史回测引擎 (HybridStrategyBacktester)**：
   - 支持股票 + 期权价差在真实历史行情（Yahoo Finance / yfinance 真实日 K 与 VIX）下的事件驱动回测。
   - 自动输出 **数据质量检验报告（Data Quality Report）**、**整体资产净值曲线（CAGR / MaxDD / Sharpe / Sortino）**、**分品种独立收益拆解（Stock vs Option）** 及 **出场原因归因明细**。
@@ -46,24 +52,25 @@
 
 ```mermaid
 flowchart TD
-    A[启动主交互终端 main.py] --> B[同步 Alpaca 账户 & 实时宏观指标 VIX / HY Spread]
-    B --> C[Regime Engine 裁定宏观体制并分配策略权重]
-    C --> D[拉取标的池实时行情快照 config/sp500_universe.json]
-    D --> E[操作员交互选择标的代码与交易倾向 AUTO/EQUITY/OPTION]
-    E --> F[LangGraph 调度 5 大策略 Agent 并行辩论]
-    F --> G{加权共识得分 >= 0.70 ?}
-    G -- 否 --> H[提示未达门槛，返回主菜单]
-    G -- 是 --> I[生成 HybridInvestmentMemo 并提交 Critic Agent 独立审查]
-    I -- 拒绝 --> J[输出违规原因，终止流程]
-    I -- 通过 --> K[CLI 高亮渲染正股/期权投资决策备忘录 Panel]
-    K --> L{HitL 人机审批流}
-    L -- R 驳回 / S 跳过 --> M[记录审计，返回主菜单]
-    L -- E 微调 --> N[微调正股股数/期权张数与止盈止损]
-    L -- A 通过 / 完成微调 --> O[RiskGuard 确定性硬风控拦截校验]
-    O -- 拦截违规 --> P[阻断下单，输出风控警报]
-    O -- 校验通过 --> Q[向 Alpaca API 下发 Bracket OCO 正股单或期权限价单]
-    Q --> R[写入不可变审计日志 logs/audit_trail.jsonl]
-    R --> S[按 Enter 键循环进入下一轮决策]
+    A[启动主交互终端 main.py] --> B[同步 Alpaca 账户全景 & 实时宏观指标 VIX / HY Spread]
+    B --> C[高亮渲染 账户概览 / 当前持仓详情 / 未成交活动挂单]
+    C --> D[Regime Engine 裁定宏观体制并分配策略权重]
+    D --> E[拉取标的池实时行情快照 config/sp500_universe.json]
+    E --> F[操作员选择标的或输入快捷指令 P查看持仓 / O查看挂单]
+    F --> G[LangGraph 调度 5 大策略 Agent 并行辩论]
+    G --> H{加权共识得分 >= 0.70 ?}
+    H -- 否 --> I[提示未达门槛，返回主菜单]
+    H -- 是 --> J[生成 HybridInvestmentMemo 并提交 Critic Agent 独立审查]
+    J -- 拒绝 --> K[输出违规原因，终止流程]
+    J -- 通过 --> L[CLI 高亮渲染正股/期权投资决策备忘录 Panel]
+    L --> M{HitL 人机审批流}
+    M -- R 驳回 / S 跳过 --> N[记录审计，返回主菜单]
+    M -- E 微调 --> O[微调正股股数/期权张数与止盈止损]
+    M -- A 通过 / 完成微调 --> P[RiskGuard 确定性硬风控拦截校验]
+    P -- 拦截违规 --> Q[阻断下单，输出风控警报]
+    P -- 校验通过 --> R[向 Alpaca API 下发 Bracket OCO 正股单或期权限价单]
+    R --> S[写入不可变审计日志 logs/audit_trail.jsonl]
+    S --> T[按 Enter 键循环进入下一轮决策]
 ```
 
 ---
@@ -78,11 +85,11 @@ AiAgentForTrading/
 │   ├── config.py                      # 回测参数配置与混合持仓数据模型
 │   └── hybrid_backtester.py           # 股票+期权价差混合回测核心引擎 (移动止盈/阶梯保本/临期平仓)
 ├── cli/
-│   └── terminal_ui.py                 # 终端富文本渲染面板 (Rich Hybrid Memo Panel)
+│   └── terminal_ui.py                 # 终端富文本渲染看板 (持仓表/挂单表/决策备忘录 Panel)
 ├── config/
-│   ├── settings.yaml                  # 全局系统配置 (Alpaca / Featherless / 风控阈值)
+│   ├── settings.yaml                  # 全局系统配置 (Alpaca / Featherless / FRED / 风控阈值)
 │   ├── investment_memo.yaml           # Critic 独立审查合规规则 (正股 + 期权)
-│   └── sp500_universe.json            # 标普 500 核心标的池白名单 (40+ 核心蓝筹覆盖 7 大行业)
+│   └── sp500_universe.json            # 标普 500 核心标的池白名单 (40+ 核心蓝筹覆盖各行业)
 ├── core/
 │   ├── agents/                        # 5 大策略研究 Agent 与 Critic Agent
 │   │   ├── base_agent.py              # 智能体基类 (抽象评估接口与 LLM 封装)
@@ -92,25 +99,28 @@ AiAgentForTrading/
 │   │   ├── contrarian_agent.py        # 逆向反转智能体
 │   │   ├── exotic_agent.py            # 衍生品与事件驱动智能体
 │   │   └── critic_agent.py            # 独立审查智能体 (一票否决权)
-│   ├── alpaca_client.py               # Alpaca API 统一网关客户端 (正股 + 期权交易与行情)
+│   ├── alpaca_client.py               # Alpaca API 统一网关客户端 (正股/期权/持仓/挂单/国债清扫)
 │   ├── consensus_engine.py            # 基于 LangGraph 的多智能体共识与混合资产决策引擎
 │   ├── options_engine.py              # 期权牛市看涨价差 (Bull Call Spread) 定价与推荐引擎
 │   ├── regime_engine.py               # 宏观体制状态机引擎 (VIX / HY Spread)
 │   ├── risk_guard.py                  # 确定性 Python 硬风控网关 (正股 + 期权风控)
-│   └── logger.py                      # 日志基础设施
-├── logs/
+│   └── logger.py                      # 统一日志基础设施 (Console+File双通道与3天过期清理)
+├── logs/                              # 日志与审计追踪存储目录
+│   ├── sentinel.log                   # 巡检守护每日轮转持久化日志
 │   └── audit_trail.jsonl              # 真实交易审计追踪日志 (JSON Lines)
 ├── sentinel/
-│   └── cron_sentinel.py               # 持仓巡检与期权临期平仓守护引擎
+│   └── cron_sentinel.py               # 15分钟持仓健康巡检、期权临期平仓与OCO挂单守护引擎
 ├── tests/                             # 自动化单元测试与回测验证套件
-│   ├── test_alpaca_client.py          # Alpaca 接口集成单元测试
+│   ├── test_alpaca_client.py          # Alpaca 接口集成与 Mock 单元测试
+│   ├── test_terminal_ui.py            # 终端持仓与挂单表格富文本渲染测试
+│   ├── test_logger.py                 # 双通道日志输出与 3 天过期清理测试
 │   ├── test_fetch_regime_real.py      # 宏观数据拉取与 Regime 测试
 │   ├── test_historical_data_validation.py # 回测历史数据质量校验测试
 │   ├── test_hybrid_backtester.py      # 混合回测引擎风控与交易逻辑测试
 │   ├── test_options_engine.py         # 期权定价、价差与希腊字母计算测试
 │   ├── test_regime_engine.py          # 宏观状态机逻辑测试
 │   └── test_risk_guard.py             # 硬风控全规则边界与混合资产测试
-├── main.py                            # CLI 交互式双轨交易终端主入口
+├── main.py                            # CLI 交互式双轨交易终端主入口 (支持看板与参数查询)
 ├── run_backtest.py                    # 真实历史行情全资产回测执行脚本
 ├── pyproject.toml                     # 项目依赖与工具链配置 (uv / pytest)
 ├── requirements.txt                   # Python 依赖清单
@@ -134,21 +144,34 @@ uv sync
 ```
 
 ### 2. 配置 API 凭证
-支持在 `config/settings.yaml` 中配置，或直接设置环境变量：
+系统支持 **`config/settings.yaml`**、**`.env` 文件** 或 **系统环境变量** 三种方式进行密钥配置：
 
-```powershell
-# Alpaca 模拟盘 API Key & Secret Key
-$env:ALPACA_API_KEY="你的_ALPACA_KEY"
-$env:ALPACA_SECRET_KEY="你的_ALPACA_SECRET"
+#### 方式 A：直接编辑 `config/settings.yaml`
+```yaml
+alpaca:
+  api_key: "你的_ALPACA_API_KEY"
+  secret_key: "你的_ALPACA_SECRET_KEY"
+  paper: true
 
-# Featherless LLM API Key (用于 5 大 Agent 并行辩论与推理)
-$env:FEATHERLESS_API_KEY="你的_FEATHERLESS_KEY"
+featherless:
+  base_url: "https://api.featherless.ai/v1"
+  api_key: "你的_FEATHERLESS_API_KEY"
+  model: "Qwen/Qwen2.5-72B-Instruct"
 
-# (可选) 美联储 FRED API Key (用于高收益利差数据)
-$env:FRED_API_KEY="你的_FRED_KEY"
+fred:
+  api_key: "你的_FRED_API_KEY"
 ```
 
-> 💡 **提示**：若在本地 `config/settings.yaml` 中填入了真实密钥，建议运行 `git update-index --skip-worktree config/settings.yaml` 防止 Git 意外提交敏感配置。
+> 💡 **安全提示**：在本地 `config/settings.yaml` 中配置真实密钥后，建议运行 `git update-index --skip-worktree config/settings.yaml` 防止 Git 意外提交私密配置。
+
+#### 方式 B：使用环境变量配置
+```powershell
+# PowerShell (Windows)
+$env:ALPACA_API_KEY="你的_ALPACA_KEY"
+$env:ALPACA_SECRET_KEY="你的_ALPACA_SECRET"
+$env:FEATHERLESS_API_KEY="你的_FEATHERLESS_KEY"
+$env:FRED_API_KEY="你的_FRED_KEY"
+```
 
 ---
 
@@ -160,55 +183,63 @@ $env:FRED_API_KEY="你的_FRED_KEY"
 uv run python main.py
 ```
 
-- **查看大盘与资产**：系统自动同步 Alpaca 账户净值、现金余额、VIX 指数、宏观体制和 S&P 500 标的池行情。
-- **选择标的与模式**：输入代码（如 `NVDA`）并选择交易倾向（`AUTO` / `EQUITY` / `OPTION`）。
-- **人机协同决策**：查看 5 大 Agent 的详细分析理由、期权价差构建详情与 Critic 审查结果，输入 `A` 确认下单，或 `E` 微调参数。
-- **安全退出**：输入 `exit` 或 `q` 随时退出系统。
+- **账户与宏观看板**：自动同步 Alpaca 账户净值、可用购买力、现金余额、SGOV 国债理财与宏观 Regime。
+- **当前持仓与活动挂单**：自动高亮渲染当前账户持仓详情与全部未成交订单。
+- **标的池与交易倾向**：输入标的代码或序号，选择 `AUTO` / `EQUITY` / `OPTION`。
+- **快捷交互指令**：
+  - 输入 `P` / `POS`：即时刷新并单独查看持仓详情。
+  - 输入 `O` / `ORD`：即时刷新并单独查看未成交活动挂单。
+  - 输入 `exit` 或 `q`：随时安全退出系统。
 
-### 2. 运行股票与期权混合策略历史回测
+### 2. 命令行单次快速查询
 
-系统将拉取 30+ 支跨行业核心标的与 VIX 过去 1 年的真实历史日 K 数据，模拟多智能体共识决策、正股持仓与 Bull Call Spread 价差构建，并执行阶梯保本止盈与 Sentinel 临期守护：
+无需进入主交互循环，直接在终端中快速查看：
+```powershell
+# 查看当前持仓详情
+uv run python main.py --positions   # 或 main.py -p
+
+# 查看未成交活动挂单
+uv run python main.py --orders      # 或 main.py -o
+
+# 完整查看账户概览、持仓与挂单看板
+uv run python main.py --status      # 或 main.py -s
+```
+
+### 3. 运行 15 分钟持仓守护与期权临期巡检 (Cron Sentinel)
+
+自动检查持仓健康度、补齐 OCO 保护单、执行期权临期平仓与闲置资金国债清扫：
+
+```powershell
+# 启动常驻后台守护进程 (每 15 分钟循环巡检，自动清理过期日志)
+uv run python -m sentinel.cron_sentinel --daemon
+
+# 或执行单次巡检与自我修复
+uv run python -m sentinel.cron_sentinel
+```
+
+### 4. 运行股票与期权混合策略历史回测
+
+拉取 30+ 支标普 500 核心标的与 VIX 真实历史日 K，模拟多智能体共识与价差策略：
 
 ```powershell
 uv run python run_backtest.py
 ```
 
-**回测报告输出包含：**
-- **数据质量检查**：校验每支标的的有效交易日数、起止日期与历史波动率（HV）。
-- **整体组合收益指标**：初始资金、期末净值、总收益率、CAGR、最大回撤、夏普比率（Sharpe）、索提诺比率（Sortino）、总交易笔数与胜率。
-- **分资产类型表现拆解**：股票（Equity）与期权价差（Bull Call Spread）的净收益、交易次数、胜率、盈亏比与平均单笔盈亏。
-- **出场原因全景归因统计**：`STOCK_TAKE_PROFIT`、`STOCK_STOP_LOSS`、`OPTION_TAKE_PROFIT`、`OPTION_TRAILING_PROFIT`、`OPTION_BREAK_EVEN_PROTECTION`、`OPTION_DTE_EXPIRY_GUARD` 等。
-
-### 3. 运行 15 分钟持仓与期权临期守护引擎 (Cron Sentinel)
-
-在独立后台守护进程运行，保障持仓安全与期权临期平仓：
+### 5. 运行全套自动化测试套件
 
 ```powershell
-uv run python -c "from sentinel.cron_sentinel import CronSentinel; from alpaca.trading.client import TradingClient; sentinel = CronSentinel(trading_client=TradingClient('KEY', 'SECRET', paper=True)); sentinel.run_daemon()"
-```
-
-### 4. 运行全套自动化测试
-
-```powershell
-uv run pytest tests/
+uv run pytest tests/ -v
 ```
 
 ---
 
 ## 🐳 Docker 容器化部署与运行
 
-本项目已完整配置轻量化生产级 `Dockerfile` 与 `docker-compose.yml`，支持通过 Docker 或 Docker Compose 在任意容器环境中一键运行。
-
-### 1. 构建 Docker 镜像
-
 ```bash
+# 1. 构建 Docker 镜像
 docker build -t aiagentfortrading:latest .
-```
 
-### 2. 使用 Docker 一键运行各服务
-
-```bash
-# 启动交互式交易终端 (需保持 -it 输入与终端分配)
+# 2. 启动交互式交易终端
 docker run -it --rm \
   -v ${PWD}/config:/app/config \
   -v ${PWD}/logs:/app/logs \
@@ -217,30 +248,8 @@ docker run -it --rm \
   -e FEATHERLESS_API_KEY="你的FEATHERLESS_KEY" \
   aiagentfortrading:latest python main.py
 
-# 运行历史回测
-docker run --rm \
-  -v ${PWD}/config:/app/config \
-  -v ${PWD}/logs:/app/logs \
-  aiagentfortrading:latest python run_backtest.py
-
-# 运行全套测试
-docker run --rm aiagentfortrading:latest pytest tests/
-```
-
-### 3. 使用 Docker Compose 便捷调度
-
-```bash
-# 启动交互式交易终端
-docker compose run --rm trader
-
-# 启动历史策略回测
-docker compose run --rm backtest
-
-# 启动 15 分钟持仓与期权临期平仓后台守护进程
+# 3. 使用 Docker Compose 一键启动守护进程
 docker compose up -d sentinel
-
-# 运行自动化测试
-docker compose run --rm test
 ```
 
 ---
@@ -252,17 +261,18 @@ docker compose run --rm test
 | **正股单仓上限** | `<= 10.0%` | 限制单一股票仓位占用总净值比例 |
 | **期权单笔权利金** | `<= 2.0%` | 严格限制单一期权价差单笔净支出 |
 | **期权总持仓敞口** | `<= 10.0%` | 控制全部期权组合总权利金暴露 |
-| **单一板块敞口** | `<= 30.0%` | 基于 GICS 行业分类控制集中度风险 |
+| **单一板块敞口** | `<= 30.0%` | 基于行业分类控制集中度风险 |
 | **日内回撤熔断** | `<= 5.0%` | 单日累计浮亏触及阈值全系统熔断开仓 |
 | **财报静默期** | `<= 7 天` | 7 天内有二元财报事件一票否决 |
 | **期权 DTE 周期** | `14 ~ 60 天` | 严禁 0DTE 末日期权交易，保障充足时间价值 |
-| **Sentinel 临期平仓** | `DTE <= 3 天` | 自动平仓锁定价差，彻底规避行权交割与末日流动性风险 |
+| **Sentinel 临期平仓** | `DTE <= 3 天` | 自动平仓锁定价差，规避行权交割与末日流动性风险 |
+| **孤儿持仓 OCO 自愈** | `缺失保护单` | 自动补齐带有止盈与止损的 OCO 双向保护单 |
 | **阶梯移动保本止盈** | `+25% / +40%` | 浮盈达 +25% 止损上移至成本价；达 +40% 锁定 +15% 利润 |
 | **正股锚定止损** | `-4.0%` | 底层正股价格跌破支撑线时联动平仓期权 |
+| **日志生命周期管理** | `3 天` | 控制台与文件双通道记录，每日自动清理 3 天前历史日志 |
 
 ---
 
 ## 📜 许可证
 
 本项目采用 [MIT License](LICENSE) 许可证。
-
