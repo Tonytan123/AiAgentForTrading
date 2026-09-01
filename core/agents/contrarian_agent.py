@@ -1,4 +1,4 @@
-from core.agents.base_agent import BaseFeatherlessAgent
+from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
 
 class ContrarianAgent(BaseFeatherlessAgent):
     """逆向投资智能体，专注于在市场过度恐慌时寻找反转机会。"""
@@ -28,3 +28,20 @@ class ContrarianAgent(BaseFeatherlessAgent):
         - 盈利目标可以设定在情绪修复，价格回归中轨（布林带中轨）的位置。
         """
         super().__init__(name="Contrarian Agent", system_prompt=sys_prompt, **kwargs)
+
+    def heuristic_evaluate(self, ticker: str, context_data: dict) -> AgentEvaluation:
+        """逆向投资智能体量化启发式评估模型"""
+        oversold_score = float(context_data.get("oversold_score", 0.10))
+        panic_index = float(context_data.get("panic_index", 25.0))
+
+        if oversold_score >= 0.50:
+            score = 0.85
+            rat = f"超卖反弹因子={oversold_score:.2f}处于极端超卖，逆向非对称赔率极高"
+        elif oversold_score >= 0.20:
+            score = 0.75
+            rat = "洗盘回调企稳，情绪释放充分"
+        else:
+            score = 0.65
+            rat = f"情绪中性稳定 (恐慌指数={panic_index:.1f})"
+
+        return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)

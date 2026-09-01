@@ -244,6 +244,26 @@ class ConsensusEngine:
         preferred_asset_type: str = "AUTO",  # AUTO / EQUITY / OPTION
     ) -> Optional[HybridInvestmentMemo]:
         """通过 LangGraph 状态图调度智能体并行评估与混合资产共识汇总"""
+        result = await self.evaluate_consensus(
+            ticker=ticker,
+            current_price=current_price,
+            total_equity=total_equity,
+            strategy_weights=strategy_weights,
+            market_data=market_data,
+            preferred_asset_type=preferred_asset_type,
+        )
+        return result.get("investment_memo")
+
+    async def evaluate_consensus(
+        self,
+        ticker: str,
+        current_price: float,
+        total_equity: float,
+        strategy_weights: Dict[str, float],
+        market_data: Dict[str, Any],
+        preferred_asset_type: str = "AUTO",
+    ) -> Dict[str, Any]:
+        """通过 LangGraph 状态图调度 5 大智能体并行辩论，返回真实协商共识得分与评估详情"""
         initial_state: ConsensusState = {
             "ticker": ticker,
             "current_price": current_price,
@@ -257,4 +277,8 @@ class ConsensusEngine:
         }
 
         result = await self.graph.ainvoke(initial_state)
-        return result.get("investment_memo")
+        return {
+            "consensus_score": result.get("consensus_score", 0.0),
+            "investment_memo": result.get("investment_memo"),
+            "evaluations": result.get("evaluations", []),
+        }

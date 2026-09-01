@@ -24,3 +24,6 @@ logs/*.log
 # IDE
 .vscode/
 .idea/
+
+# Local data cache
+config/*_cache.json

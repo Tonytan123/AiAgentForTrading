@@ -128,9 +128,12 @@ class AlpacaGateway:
             symbol=contract_symbol,  # 期权合约代码
             qty=contracts,  # 合约份数
             side=side,  # 买入或卖出
-            time_in_force=TimeInForce.DAY, #设置订单的有效期限为当日有效
-            limit_price=limit_price #期权订单的限价（买入期权）或止损价（卖出期权）
+            time_in_force=TimeInForce.DAY,  # 设置订单的有效期限为当日有效
+            limit_price=round(limit_price, 2)  # 期权订单限价
         )
+        order = self.client.submit_order(order_data=req)
+        logger.info(f"期权限价单提交成功: Symbol={contract_symbol}, OrderID={order.id}")
+        return str(order.id)
     def get_treasury_sweep_position(self, symbol: str = "SGOV") -> Optional[Dict[str, Any]]:
         """获取国债/货币基金 (如 SGOV) 的当前持仓状态"""
         try:

@@ -237,4 +237,24 @@ class TestAlpacaGatewayMock:
         assert orders[0].symbol == "MSFT"
         mock_instance.get_orders.assert_called_once()
 
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_place_option_limit_order(self, _mock_data_client, mock_trading_client):
+        """测试期权限价单提交的 mock 测试"""
+        mock_order = MagicMock()
+        mock_order.id = "opt-mock-001"
+
+        mock_instance = MagicMock()
+        mock_instance.submit_order.return_value = mock_order
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        order_id = gateway.place_option_limit_order(
+            contract_symbol="V260918C00387000",
+            contracts=1,
+            limit_price=13.28,
+        )
+        assert order_id == "opt-mock-001"
+        mock_instance.submit_order.assert_called_once()
+
 
