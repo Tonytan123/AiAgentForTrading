@@ -257,4 +257,27 @@ class TestAlpacaGatewayMock:
         assert order_id == "opt-mock-001"
         mock_instance.submit_order.assert_called_once()
 
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_cancel_symbol_orders(self, _mock_data_client, mock_trading_client):
+        """测试按标的批量撤单"""
+        mock_order1 = MagicMock()
+        mock_order1.id = "ord-sgov-001"
+        mock_order1.symbol = "SGOV"
+        mock_order1.side = "sell"
+
+        mock_order2 = MagicMock()
+        mock_order2.id = "ord-aapl-002"
+        mock_order2.symbol = "AAPL"
+        mock_order2.side = "buy"
+
+        mock_instance = MagicMock()
+        mock_instance.get_orders.return_value = [mock_order1, mock_order2]
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        canceled = gateway.cancel_symbol_orders(symbol="SGOV")
+        assert canceled == 1
+        mock_instance.cancel_order_by_id.assert_called_once_with("ord-sgov-001")
+
 
