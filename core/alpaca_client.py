@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+import time
 import logging
 import yaml
 from alpaca.data.enums import DataFeed
@@ -210,11 +211,32 @@ class AlpacaGateway:
             logger.warning(f"[Cash Sweep 异常] 自动买入国债 {symbol} 失败: {e}")
             return None
 
+    def cancel_symbol_orders(self, symbol: str, side: Optional[OrderSide] = None) -> int:
+        """撤销指定标的（以及可选方向）的所有未成交滞留挂单，返回成功撤销的订单数量"""
+        canceled_count = 0
+        try:
+            open_orders = self.get_open_orders(nested=False)
+            for order in open_orders:
+                order_sym = getattr(order, "symbol", "")
+                order_side = getattr(order, "side", None)
+                if order_sym == symbol:
+                    if side is None or str(order_side).upper() == str(side).upper():
+                        try:
+                            self.trading_client.cancel_order_by_id(order.id)
+                            canceled_count += 1
+                            logger.info(f"已自动撤销 {symbol} 滞留挂单: OrderID={order.id}")
+                        except Exception as e:
+                            logger.warning(f"撤销订单 {order.id} 失败: {e}")
+        except Exception as e:
+            logger.warning(f"获取并撤销 {symbol} 挂单异常: {e}")
+        return canceled_count
+
     def release_cash_from_treasury(
         self, required_cash: float, symbol: str = "SGOV"
     ) -> float:
         """
         当交易需要现金但现金不足时，自动卖出相应份额的国债 ETF (SGOV) 释放购买力:
+        - 具备【锁单自动自愈释放】：若可用为 0 但有总持仓，自动撤销旧卖单释放可用份额并重新卖出
         - 返回实际释放/卖出的估计资金额度
         """
         try:
@@ -225,17 +247,30 @@ class AlpacaGateway:
                 return 0.0
 
             pos = self.get_treasury_sweep_position(symbol=symbol)
-            if not pos or pos.get("qty", 0) <= 0:
-                logger.warning(f"[Release Cash] 现金缺口 ${deficit:.2f}，但无可用 {symbol} 国债持仓可供变现 (可用数量为 0 或已全额挂单锁定)！")
+            if not pos or pos.get("total_qty", 0) <= 0:
+                logger.warning(f"[Release Cash] 现金缺口 ${deficit:.2f}，账户无任何 {symbol} 国债持仓！")
+                return 0.0
+
+            # 【智能自愈】如果可用股数为 0 但总股数 > 0，说明被历史挂单锁死，自动撤销旧挂单以释放份额
+            if pos.get("qty", 0) <= 0 and pos.get("total_qty", 0) > 0:
+                logger.info(f"[Release Cash] 检测到 {symbol} 全部持仓被挂单锁定，正在自动撤销历史滞留挂单以释放可用份额...")
+                canceled = self.cancel_symbol_orders(symbol=symbol, side=OrderSide.SELL)
+                if canceled > 0:
+                    time.sleep(0.5)  # 等待 Alpaca 订单簿状态刷新
+                    pos = self.get_treasury_sweep_position(symbol=symbol)
+
+            available_qty = pos.get("qty", 0) if pos else 0
+            if available_qty <= 0:
+                logger.warning(f"[Release Cash] 现金缺口 ${deficit:.2f}，撤单后仍无可用 {symbol} 国债持仓可供变现！")
                 return 0.0
 
             try:
                 price = self.get_current_price(symbol)
             except Exception:
-                price = pos["current_price"] or 100.50
+                price = pos.get("current_price") or 100.50
 
             shares_needed = int(-(-deficit // price))  # 向上取整
-            shares_to_sell = min(int(pos["qty"]), shares_needed)
+            shares_to_sell = min(int(available_qty), shares_needed)
 
             if shares_to_sell <= 0:
                 return 0.0

@@ -601,7 +601,22 @@ async def main():
                     if freed > 0:
                         console.print(f"[bold cyan]已从 SGOV 国债理财自动变现释放约 ${freed:,.2f} 现金[/bold cyan]")
                     else:
-                        console.print(f"[yellow]提示: SGOV 暂无可变现持仓 (可能已挂单锁定)，尝试使用账户总购买力直接下单...[/yellow]")
+                        console.print(f"[yellow]提示: SGOV 暂无可用持仓变现，正在检查账户总购买力...[/yellow]")
+
+                # 购买力前置严格门禁检查 (Pre-flight Buying Power Gate)
+                try:
+                    updated_acc = exec_client.get_account_summary()
+                    available_bp = updated_acc.get("options_buying_power" if memo.asset_type == "OPTION" else "buying_power", 0.0)
+                except Exception:
+                    available_bp = total_equity
+
+                if available_bp < order_amount:
+                    console.print(
+                        f"[bold red]❌ 购买力不足拦截: 本次下单需 ${order_amount:,.2f}，当前账户可用购买力仅 ${available_bp:,.2f}。\n"
+                        f"【原因提示】若当前处于非美股常规交易时段 (休市中)，SGOV 变现单需等待开盘撮合成交后方能释放购买力。[/bold red]"
+                    )
+                    Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+                    continue
 
                 if memo.asset_type == "OPTION":
                     console.print(
