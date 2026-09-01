@@ -199,3 +199,42 @@ class TestAlpacaGatewayMock:
         assert freed == 2000.0
         mock_instance.submit_order.assert_called_once()
 
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_get_positions(self, _mock_data_client, mock_trading_client):
+        """测试获取持仓列表的 mock 测试"""
+        mock_pos = MagicMock()
+        mock_pos.symbol = "AAPL"
+        mock_pos.qty = "50"
+        mock_pos.market_value = "11625.00"
+
+        mock_instance = MagicMock()
+        mock_instance.get_all_positions.return_value = [mock_pos]
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        positions = gateway.get_positions()
+        assert len(positions) == 1
+        assert positions[0].symbol == "AAPL"
+        mock_instance.get_all_positions.assert_called_once()
+
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_get_open_orders(self, _mock_data_client, mock_trading_client):
+        """测试获取未成交订单列表的 mock 测试"""
+        mock_order = MagicMock()
+        mock_order.id = "ord-mock-001"
+        mock_order.symbol = "MSFT"
+        mock_order.status = "accepted"
+
+        mock_instance = MagicMock()
+        mock_instance.get_orders.return_value = [mock_order]
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        orders = gateway.get_open_orders()
+        assert len(orders) == 1
+        assert orders[0].symbol == "MSFT"
+        mock_instance.get_orders.assert_called_once()
+
+

@@ -1,12 +1,15 @@
 alpaca:
-  api_key: "PKX4HRNDRZ5GCY7OUDYGL4XM34"
-  secret_key: ""
+  api_key: "YOUR_ALPACA_API_KEY"
+  secret_key: "YOUR_ALPACA_SECRET_KEY"
   paper: true
 
 featherless:
   base_url: "https://api.featherless.ai/v1"
   api_key: "YOUR_FEATHERLESS_API_KEY"
-  model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+  model: "Qwen/Qwen2.5-72B-Instruct"
+
+fred:
+  api_key: "YOUR_FRED_API_KEY"
 
 risk:
   max_single_position_pct: 0.048  # 单仓上限 4.8%
@@ -18,3 +21,11 @@ strategy:
   take_profit_multiplier: 1.08    # +8% TP
   stop_loss_multiplier: 0.96      # -4% SL
   consensus_threshold: 0.70       # 辩论共识入场分阈值
+
+cash_management:
+  enabled: true
+  vehicle_symbol: "SGOV"          # 超短期美债 ETF (iShares 0-3 Month Treasury Bond ETF)
+  reserve_cash: 500.0             # 安全备用现金 (美元)
+  annual_yield: 0.045             # 预期年化无风险收益率 4.5%
+  auto_sweep: true                # 开启闲置资金自动清扫
+

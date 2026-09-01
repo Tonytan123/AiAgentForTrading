@@ -1,17 +1,17 @@
-from langsmith._openapi_client.types import run_select_field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import logging
 import yaml
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestBarRequest
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce, QueryOrderStatus
 from alpaca.trading.requests import (
     MarketOrderRequest,
     LimitOrderRequest,
     StopLossRequest,
     TakeProfitRequest,
+    GetOrdersRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,13 +43,22 @@ class AlpacaGateway:
         """Retrieve current trading account information."""
         return self.trading_client.get_account()
 
-    def get_positions(self):
+    def get_positions(self) -> List[Any]:
         """Retrieve all currently held open positions."""
-        return self.trading_client.get_all_positions()
+        try:
+            return self.trading_client.get_all_positions()
+        except Exception as e:
+            logger.warning(f"获取持仓列表异常: {e}")
+            return []
 
-    def get_open_orders(self):
+    def get_open_orders(self, nested: bool = True) -> List[Any]:
         """Retrieve all currently active open orders."""
-        return self.trading_client.get_orders()
+        try:
+            req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=nested)
+            return self.trading_client.get_orders(filter=req)
+        except Exception as e:
+            logger.warning(f"获取未成交订单列表异常: {e}")
+            return []
 
     def get_current_price(self, symbol: str) -> float:
         """Fetch latest market close price for the specified stock symbol."""

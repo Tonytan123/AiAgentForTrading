@@ -11,6 +11,7 @@ import yaml
 import asyncio
 from typing import Dict, Any, List, Optional
 
+import argparse
 import requests
 from rich.console import Console
 from rich.table import Table
@@ -25,7 +26,15 @@ from core.regime_engine import RegimeEngine
 from core.consensus_engine import ConsensusEngine, HybridInvestmentMemo
 from core.agents.critic_agent import CriticAgent
 from core.risk_guard import RiskGuard
-from cli.terminal_ui import render_hybrid_memo_panel, render_memo_panel
+from cli.terminal_ui import (
+    render_hybrid_memo_panel,
+    render_memo_panel,
+    render_positions_table,
+    render_open_orders_table,
+    print_portfolio_dashboard,
+    print_positions_table,
+    print_open_orders_table,
+)
 
 console = Console()
 
@@ -150,6 +159,12 @@ def fetch_tickers_snapshots(
 
 
 async def main():
+    parser = argparse.ArgumentParser(description="AiAgentForTrading 交互式量化交易系统终端")
+    parser.add_argument("-p", "--positions", action="store_true", help="直接在命令行显示当前持仓详情并退出")
+    parser.add_argument("-o", "--orders", action="store_true", help="直接在命令行显示当前未成交活动挂单并退出")
+    parser.add_argument("-s", "--status", action="store_true", help="直接在命令行显示完整账户概览、持仓及挂单并退出")
+    args = parser.parse_args()
+
     console.print("\n[bold cyan]=================================================================[/bold cyan]")
     console.print("[bold cyan]   交互式多智能体量化交易系统 (正股 + Alpaca 期权双轨终端)        [/bold cyan]")
     console.print("[bold cyan]=================================================================\n[/bold cyan]")
@@ -184,10 +199,21 @@ async def main():
     universe_tickers = load_sp500_universe("config/sp500_universe.json")
     universe_sectors = load_universe_sectors("config/sp500_universe.json")
 
-    # 交互式主事件循环
-    while True:
-        # 2. 从 Alpaca 同步真实账户资产状态
-        console.print("\n[bold blue][*] 正在同步 Alpaca 账户实时数据与宏观指标...[/bold blue]")
+    # 快捷 CLI 参数单次执行分支
+    if args.positions:
+        console.print("[bold blue][*] 正在从 Alpaca 获取最新持仓详情...[/bold blue]")
+        positions = exec_client.get_positions()
+        print_positions_table(positions)
+        return
+
+    if args.orders:
+        console.print("[bold blue][*] 正在从 Alpaca 获取最新未成交订单...[/bold blue]")
+        orders = exec_client.get_open_orders()
+        print_open_orders_table(orders)
+        return
+
+    if args.status:
+        console.print("[bold blue][*] 正在同步 Alpaca 账户全景状态...[/bold blue]")
         try:
             account_summary = exec_client.get_account_summary()
             total_equity = account_summary["total_equity"]
@@ -195,11 +221,67 @@ async def main():
             cash = account_summary["cash"]
             day_pnl_pct = account_summary["day_pnl_pct"]
         except Exception as e:
+            console.print(f"[yellow]获取账户信息提示: {e}[/yellow]")
+            total_equity = 100000.0
+            buying_power = 200000.0
+            cash = 100000.0
+            day_pnl_pct = 0.0
+
+        macro_metrics = fetch_live_macro_metrics(fred_api_key=fred_key)
+        vix, hy_spread = macro_metrics["vix"], macro_metrics["hy_spread"]
+        current_regime = regime_engine.determine_regime(vix, hy_spread)
+        sgov_pos = exec_client.get_treasury_sweep_position("SGOV")
+        sgov_val = sgov_pos["market_value"] if sgov_pos else 0.0
+
+        status_table = Table(title="[bold cyan]账户与宏观状态总览[/bold cyan]", border_style="cyan")
+        status_table.add_column("账户总净值 (Equity)", justify="right", style="green")
+        status_table.add_column("可用购买力 (Buying Power)", justify="right")
+        status_table.add_column("现金余额 (Cash)", justify="right")
+        status_table.add_column("国债理财 (SGOV)", justify="right", style="yellow")
+        status_table.add_column("当日盈亏比例", justify="right")
+        status_table.add_column("VIX 指数", justify="center")
+        status_table.add_column("高收益利差", justify="center")
+        status_table.add_column("宏观模式", justify="center", style="bold magenta")
+        pnl_color = "green" if day_pnl_pct >= 0 else "red"
+        status_table.add_row(
+            f"${total_equity:,.2f}",
+            f"${buying_power:,.2f}",
+            f"${cash:,.2f}",
+            f"${sgov_val:,.2f} (~4.5% p.a.)",
+            f"[{pnl_color}]{day_pnl_pct:+.2%}[/{pnl_color}]",
+            str(vix),
+            f"{hy_spread}%",
+            current_regime
+        )
+        console.print(status_table)
+        console.print("\n")
+        positions = exec_client.get_positions()
+        print_positions_table(positions)
+        console.print("\n")
+        orders = exec_client.get_open_orders()
+        print_open_orders_table(orders)
+        return
+
+    # 交互式主事件循环
+    while True:
+        # 2. 从 Alpaca 同步真实账户资产状态、当前持仓与活动挂单
+        console.print("\n[bold blue][*] 正在同步 Alpaca 账户实时数据、持仓状态与活动挂单...[/bold blue]")
+        try:
+            account_summary = exec_client.get_account_summary()
+            total_equity = account_summary["total_equity"]
+            buying_power = account_summary["buying_power"]
+            cash = account_summary["cash"]
+            day_pnl_pct = account_summary["day_pnl_pct"]
+            current_positions = exec_client.get_positions()
+            current_orders = exec_client.get_open_orders()
+        except Exception as e:
             console.print(f"[bold red]连接 Alpaca API 失败 ({e})，使用默认模拟净值 $100,000.00[/bold red]")
             total_equity = 100000.0
             buying_power = 200000.0
             cash = 100000.0
             day_pnl_pct = 0.0
+            current_positions = []
+            current_orders = []
 
         # 3. 获取实时宏观指标并裁定 Regime 状态
         macro_metrics = fetch_live_macro_metrics(fred_api_key=fred_key)
@@ -212,7 +294,7 @@ async def main():
         sgov_val = sgov_pos["market_value"] if sgov_pos else 0.0
 
         # 打印账户与市场宏观状态看板
-        status_table = Table(title="账户与宏观状态总览", border_style="cyan")
+        status_table = Table(title="[bold cyan]账户与宏观状态总览[/bold cyan]", border_style="cyan")
         status_table.add_column("账户总净值 (Equity)", justify="right", style="green")
         status_table.add_column("可用购买力 (Buying Power)", justify="right")
         status_table.add_column("现金余额 (Cash)", justify="right")
@@ -235,13 +317,20 @@ async def main():
         )
         console.print(status_table)
 
+        # 渲染持仓详情看板
+        console.print("\n")
+        console.print(render_positions_table(current_positions))
+
+        # 渲染未成交订单看板
+        console.print("\n")
+        console.print(render_open_orders_table(current_orders))
 
         # 4. 加载 S&P 500 标的池并拉取实时行情展示
         console.print(f"\n[bold blue][*] 正在从标的池 (共 {len(universe_tickers)} 支标的) 获取最新市场快照...[/bold blue]")
         snapshots = fetch_tickers_snapshots(data_client, universe_tickers)
 
         # 渲染标的池快照行情表格
-        ticker_table = Table(title="标普 500 核心标的行情池", border_style="blue")
+        ticker_table = Table(title="[bold blue]标普 500 核心标的行情池[/bold blue]", border_style="blue")
         ticker_table.add_column("序号", justify="center", style="dim")
         ticker_table.add_column("代码 (Ticker)", justify="center", style="bold yellow")
         ticker_table.add_column("最新市价", justify="right", style="cyan")
@@ -266,13 +355,27 @@ async def main():
 
         # 5. 用户交互选择交易标的与交易倾向模式
         user_choice = Prompt.ask(
-            "\n请输入要分析交易的 [bold yellow]标的代码[/bold yellow] 或 [bold yellow]序号[/bold yellow] (输入 'exit' 或 'q' 退出)",
+            "\n请输入要分析交易的 [bold yellow]标的代码[/bold yellow] 或 [bold yellow]序号[/bold yellow] (输入 'P'=查看持仓, 'O'=查看未成交挂单, 'exit'/'q'=退出)",
             default="1"
         ).strip().upper()
 
         if user_choice in ["Q", "QUIT", "EXIT"]:
             console.print("[bold yellow]已退出交易系统。祝您投资顺利！[/bold yellow]")
             break
+
+        if user_choice in ["P", "POS", "POSITION", "POSITIONS"]:
+            console.print("\n[bold cyan][*] 正在即时刷新 Alpaca 持仓详情...[/bold cyan]")
+            latest_pos = exec_client.get_positions()
+            print_positions_table(latest_pos)
+            Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+            continue
+
+        if user_choice in ["O", "ORD", "ORDER", "ORDERS"]:
+            console.print("\n[bold cyan][*] 正在即时刷新 Alpaca 未成交活动挂单...[/bold cyan]")
+            latest_ord = exec_client.get_open_orders()
+            print_open_orders_table(latest_ord)
+            Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+            continue
 
         selected_ticker = ticker_map.get(user_choice, user_choice)
         if selected_ticker not in universe_tickers:
