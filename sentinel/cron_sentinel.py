@@ -20,24 +20,22 @@ from alpaca.trading.requests import (
     LimitOrderRequest,
     StopOrderRequest,
     MarketOrderRequest,
+    TakeProfitRequest,
+    StopLossRequest,
 )
 from alpaca.trading.enums import QueryOrderStatus, OrderClass, AssetClass
+from core.alpaca_client import AlpacaExecutionClient
+from core.logger import setup_logger, cleanup_expired_logs
 
 # ==========================================
-# 1. 日志与审计系统配置
+# 1. 日志与审计系统配置 (控制台 + 文件双通道, 保留3天)
 # ==========================================
-logger = logging.getLogger("CronSentinel")
-logger.setLevel(logging.INFO)
-
-if not logger.handlers:
-    # 控制台格式化输出
-    console_handler = logging.StreamHandler()
-    console_formatter = logging.Formatter(
-        "[%(asctime)s] [%(levelname)s] [Sentinel] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
+logger = setup_logger(
+    name="CronSentinel",
+    log_dir="logs",
+    log_file="sentinel.log",
+    retention_days=3,
+)
 
 AUDIT_LOG_FILE = "logs/audit_trail.jsonl"
 
@@ -70,12 +68,13 @@ class CronSentinel:
     - 孤儿持仓对冲：自动补齐 TP (+10%)、SL (-5%) 保护单
     - 闲置现金自动清扫：每日将超额闲置现金买入低风险超短期国债 ETF (SGOV, 年化 ~4.5%)
     - 超时持仓强制平仓 (最大持有期 180 天)
+    - 每日自动清理超过 3 天的历史过期日志
     - 异常捕获与全流程不可变审计追踪
     """
 
     def __init__(
         self,
-        trading_client: TradingClient,
+        trading_client: Optional[TradingClient] = None,
         max_holding_days: int = 180,  # 最大持仓时间 6个月 (正股超时平仓)
         max_option_dte_close: int = 2,  # 期权临期平仓天数 (DTE <= 2)
         default_tp_pct: float = 0.10,  # 止盈 10%
@@ -84,8 +83,17 @@ class CronSentinel:
         auto_sweep: bool = True,  # 自动将闲置资金买入国债 ETF (SGOV)
         sweep_symbol: str = "SGOV",
         reserve_cash: float = 500.0,
+        log_retention_days: int = 3,  # 日志保留 3 天
+        api_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        paper: Optional[bool] = None,
     ):
-        self.trading_client = trading_client
+        if trading_client is not None:
+            self.trading_client = trading_client
+        else:
+            gateway = AlpacaExecutionClient(api_key=api_key, secret_key=secret_key, paper=paper)
+            self.trading_client = gateway.trading_client
+
         self.max_holding_days = max_holding_days
         self.max_option_dte_close = max_option_dte_close
         self.default_tp_pct = default_tp_pct
@@ -94,10 +102,20 @@ class CronSentinel:
         self.auto_sweep = auto_sweep
         self.sweep_symbol = sweep_symbol
         self.reserve_cash = reserve_cash
+        self.log_retention_days = log_retention_days
         self._is_running = False
 
     def inspect_and_heal(self) -> Dict[str, Any]:
         """执行单次巡检与自我修复核心逻辑"""
+        # 自动执行过期日志清理 (默认清理超过 3 天的历史日志)
+        cleanup_count = cleanup_expired_logs(
+            log_dir="logs",
+            retention_days=self.log_retention_days,
+            prefix="sentinel",
+        )
+        if cleanup_count > 0:
+            logger.info(f"[Sentinel] 自动清理已完成: 移除了 {cleanup_count} 个超过 {self.log_retention_days} 天的历史日志文件。")
+
         logger.info("[Sentinel] 开始执行 15 分钟正股与期权持仓健康巡检...")
         stats = {
             "status": "SUCCESS",
@@ -220,10 +238,11 @@ class CronSentinel:
                         )
                         self._heal_orphan_position(
                             symbol=symbol,
-                            qty=int(qty),
+                            qty=float(qty),
                             avg_price=avg_entry_price,
                             missing_tp=not has_tp_order,
                             missing_sl=not has_sl_order,
+                            existing_orders=related_orders,
                         )
                         stats["orphan_positions_healed"] += 1
                     else:
@@ -256,51 +275,48 @@ class CronSentinel:
     def _heal_orphan_position(
         self,
         symbol: str,
-        qty: int,
+        qty: float,
         avg_price: float,
         missing_tp: bool,
         missing_sl: bool,
+        existing_orders: Optional[List[Any]] = None,
     ) -> None:
-        """为孤儿持仓补发止盈与止损挂单"""
+        """为孤儿持仓补发止盈与止损挂单 (自动升级替换为 OCO 双向保护单)"""
         tp_price = round(avg_price * (1.0 + self.default_tp_pct), 2)
         sl_price = round(avg_price * (1.0 - self.default_sl_pct), 2)
 
         try:
-            # 补发止盈单 (Limit Order GTC)
-            if missing_tp:
-                tp_req = LimitOrderRequest(
-                    symbol=symbol,
-                    qty=qty,
-                    side=OrderSide.SELL,
-                    time_in_force=TimeInForce.GTC,
-                    limit_price=tp_price,
-                )
-                tp_res = self.trading_client.submit_order(tp_req)
-                logger.info(f"已补发止盈单: {symbol} @ ${tp_price:.2f} (OrderID: {tp_res.id})")
-                record_audit_log("ORPHAN_HEAL_TP", {
-                    "symbol": symbol,
-                    "order_id": str(tp_res.id),
-                    "limit_price": tp_price,
-                    "qty": qty,
-                })
+            # 若保护单不完整（无论全缺还是仅单边），先清理已存在的单边卖单，释放份额以统一提交 OCO 单
+            if existing_orders:
+                for ord_item in existing_orders:
+                    if getattr(ord_item, "side", None) == OrderSide.SELL:
+                        try:
+                            self.trading_client.cancel_order_by_id(order_id=ord_item.id)
+                            logger.info(f"已清理旧的单边保护单: {symbol} OrderID={ord_item.id}")
+                        except Exception:
+                            pass
 
-            # 补发止损单 (Stop Order GTC)
-            if missing_sl:
-                sl_req = StopOrderRequest(
-                    symbol=symbol,
-                    qty=qty,
-                    side=OrderSide.SELL,
-                    time_in_force=TimeInForce.GTC,
-                    stop_price=sl_price,
-                )
-                sl_res = self.trading_client.submit_order(sl_req)
-                logger.info(f"已补发止损单: {symbol} @ ${sl_price:.2f} (OrderID: {sl_res.id})")
-                record_audit_log("ORPHAN_HEAL_SL", {
-                    "symbol": symbol,
-                    "order_id": str(sl_res.id),
-                    "stop_price": sl_price,
-                    "qty": qty,
-                })
+            # 统一提交 OCO (One-Cancels-Other) 订单，同时覆盖 TP 限价与 SL 止损
+            oco_req = LimitOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.GTC,
+                order_class=OrderClass.OCO,
+                take_profit=TakeProfitRequest(limit_price=tp_price),
+                stop_loss=StopLossRequest(stop_price=sl_price),
+            )
+            oco_res = self.trading_client.submit_order(oco_req)
+            logger.info(
+                f"已补发正股 OCO 保护单: {symbol} x {qty} 股 (止盈价: ${tp_price:.2f}, 止损价: ${sl_price:.2f}, OrderID: {oco_res.id})"
+            )
+            record_audit_log("ORPHAN_HEAL_OCO", {
+                "symbol": symbol,
+                "order_id": str(oco_res.id),
+                "take_profit_price": tp_price,
+                "stop_loss_price": sl_price,
+                "qty": qty,
+            })
 
         except Exception as e:
             logger.error(f"为孤儿持仓 {symbol} 补发保护订单失败: {e}", exc_info=True)
@@ -331,17 +347,33 @@ class CronSentinel:
     def _sweep_idle_cash(self) -> Optional[Dict[str, Any]]:
         """将账户多余闲置现金自动配置买入超短期国债 ETF (SGOV)"""
         try:
-            account = self.trading_client.get_account()
-            cash = float(account.cash)
-            idle_cash = cash - self.reserve_cash
-
-            if idle_cash < 100.0:
-                logger.info(f"[Sentinel Cash Sweep] 闲置现金 ${idle_cash:.2f} 低于单股起投阈值，暂不执行清扫。")
+            # 1. 检查是否已有挂单中的国债 ETF 买单，避免重复清扫导致购买力不足
+            open_orders = self.trading_client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            )
+            pending_sweeps = [
+                o for o in open_orders
+                if getattr(o, "symbol", "") == self.sweep_symbol and getattr(o, "side", None) == OrderSide.BUY
+            ]
+            if pending_sweeps:
+                logger.info(
+                    f"[Sentinel Cash Sweep] 已存在挂单中的 {self.sweep_symbol} 买单 (共 {len(pending_sweeps)} 笔)，跳过本次清扫。"
+                )
                 return None
 
-            # 获取当前 SGOV 价格估计
+            # 2. 获取账户实际现金及可用购买力 (两者取最小值，预留 reserve_cash)
+            account = self.trading_client.get_account()
+            cash = float(account.cash)
+            buying_power = float(account.buying_power)
+            usable_cash = min(cash, buying_power) - self.reserve_cash
+
+            if usable_cash < 100.0:
+                logger.info(f"[Sentinel Cash Sweep] 可用闲置资金 ${usable_cash:.2f} 低于单股起投阈值，暂不执行清扫。")
+                return None
+
+            # 3. 获取当前标的参考价格
             est_price = 100.50
-            shares = int(idle_cash // est_price)
+            shares = int(usable_cash // est_price)
             if shares <= 0:
                 return None
 
@@ -371,8 +403,8 @@ class CronSentinel:
                 "order_id": str(order.id),
             }
         except Exception as e:
-            logger.error(f"[Sentinel Cash Sweep 失败] 闲置资金清扫异常: {e}", exc_info=True)
-            record_audit_log("TREASURY_SWEEP_FAILED", {"error": str(e)})
+            logger.warning(f"[Sentinel Cash Sweep 提示] 资金清扫暂缓执行: {e}")
+            record_audit_log("TREASURY_SWEEP_SKIPPED", {"reason": str(e)})
             return None
 
     def run_daemon(self) -> None:
@@ -395,3 +427,19 @@ class CronSentinel:
         logger.info("正在停止 CronSentinel 守护进程...")
         self._is_running = False
         record_audit_log("SENTINEL_DAEMON_STOPPED", {})
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="CronSentinel 15分钟持仓守护与期权临期健康巡检引擎")
+    parser.add_argument("--daemon", action="store_true", help="以常驻守护进程模式启动 (每 15 分钟循环巡检)")
+    args = parser.parse_args()
+
+    sentinel = CronSentinel()
+    if args.daemon:
+        sentinel.run_daemon()
+    else:
+        logger.info("执行单次持仓与期权健康巡检...")
+        result = sentinel.inspect_and_heal()
+        print("\n巡检执行结果:\n", json.dumps(result, indent=2, ensure_ascii=False))
