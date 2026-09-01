@@ -135,15 +135,28 @@ class AlpacaGateway:
         logger.info(f"期权限价单提交成功: Symbol={contract_symbol}, OrderID={order.id}")
         return str(order.id)
     def get_treasury_sweep_position(self, symbol: str = "SGOV") -> Optional[Dict[str, Any]]:
-        """获取国债/货币基金 (如 SGOV) 的当前持仓状态"""
+        """获取国债/货币基金 (如 SGOV) 的当前持仓状态 (包含总持仓与可用未锁定持仓)"""
         try:
             position = self.trading_client.get_open_position(symbol_or_asset_id=symbol)
+            qty_raw = getattr(position, "qty", 0.0)
+            qty_avail_raw = getattr(position, "qty_available", None)
+
+            # 兼容 Alpaca SDK 属性及 Mock 对象
+            if qty_avail_raw is not None and not hasattr(qty_avail_raw, "_mock_return_value"):
+                try:
+                    qty_avail = float(qty_avail_raw)
+                except (ValueError, TypeError):
+                    qty_avail = float(qty_raw)
+            else:
+                qty_avail = float(qty_raw)
+
             return {
                 "symbol": symbol,
-                "qty": float(position.qty),
-                "market_value": float(position.market_value),
-                "current_price": float(position.current_price),
-                "unrealized_pl": float(position.unrealized_pl),
+                "qty": qty_avail,  # 可供卖出的可用数量 (排除已挂单锁定部分)
+                "total_qty": float(qty_raw),
+                "market_value": float(getattr(position, "market_value", 0.0)),
+                "current_price": float(getattr(position, "current_price", 0.0)),
+                "unrealized_pl": float(getattr(position, "unrealized_pl", 0.0)),
             }
         except Exception:
             return None
@@ -156,42 +169,46 @@ class AlpacaGateway:
         - 保留 reserve_cash (默认 $500) 基础流动性缓冲
         - 计算可买入整股数并在 Alpaca 提交买单
         """
-        account_summary = self.get_account_summary()
-        current_cash = account_summary["cash"]
-        idle_cash = current_cash - reserve_cash
-
-        if idle_cash < 100.0:
-            logger.info(f"[Cash Sweep] 当前闲置现金 ${idle_cash:.2f} 低于单股起投阈值，无需清扫。")
-            return None
-
         try:
-            price = self.get_current_price(symbol)
-        except Exception:
-            price = 100.50  # 离线或基准保底估价
+            account_summary = self.get_account_summary()
+            current_cash = account_summary["cash"]
+            idle_cash = current_cash - reserve_cash
 
-        shares_to_buy = int(idle_cash // price)
-        if shares_to_buy <= 0:
+            if idle_cash < 100.0:
+                logger.info(f"[Cash Sweep] 当前闲置现金 ${idle_cash:.2f} 低于单股起投阈值，无需清扫。")
+                return None
+
+            try:
+                price = self.get_current_price(symbol)
+            except Exception:
+                price = 100.50  # 离线或基准保底估价
+
+            shares_to_buy = int(idle_cash // price)
+            if shares_to_buy <= 0:
+                return None
+
+            cost = shares_to_buy * price
+            req = MarketOrderRequest(
+                symbol=symbol,
+                qty=shares_to_buy,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+            )
+            order = self.trading_client.submit_order(order_data=req)
+            logger.info(
+                f"[Cash Sweep 成功] 闲置现金买入国债 ETF: Symbol={symbol}, Qty={shares_to_buy}, "
+                f"Est Cost=${cost:.2f}, OrderID={order.id}"
+            )
+            return {
+                "order_id": str(order.id),
+                "symbol": symbol,
+                "shares": shares_to_buy,
+                "cost": cost,
+                "remaining_cash": current_cash - cost,
+            }
+        except Exception as e:
+            logger.warning(f"[Cash Sweep 异常] 自动买入国债 {symbol} 失败: {e}")
             return None
-
-        cost = shares_to_buy * price
-        req = MarketOrderRequest(
-            symbol=symbol,
-            qty=shares_to_buy,
-            side=OrderSide.BUY,
-            time_in_force=TimeInForce.DAY,
-        )
-        order = self.trading_client.submit_order(order_data=req)
-        logger.info(
-            f"[Cash Sweep 成功] 闲置现金买入国债 ETF: Symbol={symbol}, Qty={shares_to_buy}, "
-            f"Est Cost=${cost:.2f}, OrderID={order.id}"
-        )
-        return {
-            "order_id": str(order.id),
-            "symbol": symbol,
-            "shares": shares_to_buy,
-            "cost": cost,
-            "remaining_cash": current_cash - cost,
-        }
 
     def release_cash_from_treasury(
         self, required_cash: float, symbol: str = "SGOV"
@@ -200,41 +217,45 @@ class AlpacaGateway:
         当交易需要现金但现金不足时，自动卖出相应份额的国债 ETF (SGOV) 释放购买力:
         - 返回实际释放/卖出的估计资金额度
         """
-        account_summary = self.get_account_summary()
-        current_cash = account_summary["cash"]
-        deficit = required_cash - current_cash
-        if deficit <= 0:
-            return 0.0
-
-        pos = self.get_treasury_sweep_position(symbol=symbol)
-        if not pos or pos["qty"] <= 0:
-            logger.warning(f"[Release Cash] 现金缺口 ${deficit:.2f}，但无 {symbol} 国债持仓可供变现！")
-            return 0.0
-
         try:
-            price = self.get_current_price(symbol)
-        except Exception:
-            price = pos["current_price"] or 100.50
+            account_summary = self.get_account_summary()
+            current_cash = account_summary["cash"]
+            deficit = required_cash - current_cash
+            if deficit <= 0:
+                return 0.0
 
-        shares_needed = int(-(-deficit // price))  # 向上取整
-        shares_to_sell = min(int(pos["qty"]), shares_needed)
+            pos = self.get_treasury_sweep_position(symbol=symbol)
+            if not pos or pos.get("qty", 0) <= 0:
+                logger.warning(f"[Release Cash] 现金缺口 ${deficit:.2f}，但无可用 {symbol} 国债持仓可供变现 (可用数量为 0 或已全额挂单锁定)！")
+                return 0.0
 
-        if shares_to_sell <= 0:
+            try:
+                price = self.get_current_price(symbol)
+            except Exception:
+                price = pos["current_price"] or 100.50
+
+            shares_needed = int(-(-deficit // price))  # 向上取整
+            shares_to_sell = min(int(pos["qty"]), shares_needed)
+
+            if shares_to_sell <= 0:
+                return 0.0
+
+            req = MarketOrderRequest(
+                symbol=symbol,
+                qty=shares_to_sell,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+            )
+            order = self.trading_client.submit_order(order_data=req)
+            freed_cash = shares_to_sell * price
+            logger.info(
+                f"[Release Cash 成功] 卖出国债 ETF 释放现金: Symbol={symbol}, Qty={shares_to_sell}, "
+                f"Freed Est Cash=${freed_cash:.2f}, OrderID={order.id}"
+            )
+            return freed_cash
+        except Exception as e:
+            logger.warning(f"[Release Cash 异常] 自动变现 {symbol} 释放资金失败: {e}")
             return 0.0
-
-        req = MarketOrderRequest(
-            symbol=symbol,
-            qty=shares_to_sell,
-            side=OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
-        )
-        order = self.trading_client.submit_order(order_data=req)
-        freed_cash = shares_to_sell * price
-        logger.info(
-            f"[Release Cash 成功] 卖出国债 ETF 释放现金: Symbol={symbol}, Qty={shares_to_sell}, "
-            f"Freed Est Cash=${freed_cash:.2f}, OrderID={order.id}"
-        )
-        return freed_cash
 
 # Alias for backward/forward compatibility
 AlpacaExecutionClient = AlpacaGateway

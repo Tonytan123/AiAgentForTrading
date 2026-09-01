@@ -600,6 +600,8 @@ async def main():
                     freed = exec_client.release_cash_from_treasury(order_amount)
                     if freed > 0:
                         console.print(f"[bold cyan]已从 SGOV 国债理财自动变现释放约 ${freed:,.2f} 现金[/bold cyan]")
+                    else:
+                        console.print(f"[yellow]提示: SGOV 暂无可变现持仓 (可能已挂单锁定)，尝试使用账户总购买力直接下单...[/yellow]")
 
                 if memo.asset_type == "OPTION":
                     console.print(
