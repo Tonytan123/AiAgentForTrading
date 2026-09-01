@@ -13,22 +13,30 @@
   - **Macro Agent (宏观基本面)**：结合 VIX 恐慌指数与 FRED 高收益信用利差评估市场风险偏好。
   - **StatArb Agent (统计套利)**：监控与 SPY 标杆的滚动相关系数与价差 Z-Score 均值回归。
   - **Contrarian Agent (逆向投资)**：利用市场恐慌指数与超卖程度逆势寻找非对称博弈机会。
-  - **Exotic Agent (衍生品与事件驱动)**：分析期权看涨/看跌比率 (PCR)、异常期权活动与财报窗口期。
+  - **Exotic Agent (衍生品与事件驱动)**：分析期权看涨/看跌比率 (PCR)、异常期权活动与真实财报窗口期。
+- **全市场五大智能体真实协商一键扫盘引擎 (Real 5-Agent Consensus Market Scanner)**：
+  - 并发执行标普 500 核心标的池的 5 大智能体真实辩论协商与加权打分。
+  - 严格准入门槛：仅输出加权共识得分 $\ge 0.70$ 的高置信机会，自动按得分降序排列。
+  - 智能状态标记：自动识别并标记 `[已持仓]`、`[挂单中]` 及 `[新机会]`，防止重复追高下单。
+  - 快捷指令与独立模式：交互终端输入 `S` 或命令行 `main.py --scan` 直接输出推荐表格并支持快捷选号直通下单。
+- **24 小时本地缓存财报日历提供器 (EarningsCalendarProvider)**：
+  - 基于 `yfinance` 与本地磁盘 JSON 持久化缓存，精准获取标的下次财报发布日及剩余天数 (`days_to_earnings`)。
+  - 24 小时 TTL 自动更新，支持多线程批量预加载（prefetch），无网络重复请求延迟。
+  - 联动 Exotic Agent 动态评估事件风险，联动 Critic Agent 严格执行 7 天财报静默期（Blackout Days）一票否决。
 - **动态宏观体制裁定 (Regime Engine)**：
   - 自动识别 `Bull_Trend` (多头趋势)、`High_Vol_Bear` (高波熊市)、`Panic_Crisis` (恐慌危机) 与 `Neutral_Range` (震荡模式)。
   - 依据宏观模式动态调配 5 大策略智能体的权重矩阵。
-- **正股 + 牛市看涨期权价差双轨资产决策 (Hybrid Investment Memo & Bull Call Spread)**：
-  - **正股配置（Common Stock）**：趋势明显或低波动环境下稳健配置。
-  - **牛市看涨垂直价差策略（Bull Call Spread）**：自动构建买入低行权价 Call (Long Leg) + 卖出高行权价 Call (Short Leg)，压降权利金支出并规避波动率暴跌风险。
+- **正股 + 牛市看涨期权价差双轨资产决策与真实执行 (Hybrid Investment Memo & Execution)**：
+  - **正股配置（Common Stock）**：趋势明显或低波动环境下稳健配置，下发 Bracket OCO（止盈+止损）单。
+  - **牛市看涨期权（Bull Call / Long Call）**：共识高且高动量时推荐期权以小博大，通过 `place_option_limit_order` 真实提交期权限价单并同步挂单看板。
   - **智能资产路由**：支持 `AUTO`（智能权衡）、`EQUITY`（仅正股）与 `OPTION`（仅期权）。
-  - **Black-Scholes 期权二元定价与希腊字母计算**：精确计算组合 Net Delta、Net Gamma、Net Theta 与 Net Vega。
 - **持仓详情与活动挂单终端富文本看板 (Positions & Open Orders Dashboard)**：
   - **持仓看板**：清晰展示正股、期权与国债 ETF 的持仓数量、均价、市价、市值、当日涨跌、浮动盈亏（金额与比例红绿配色）及组合总汇总。
-  - **挂单看板**：清晰展示所有未成交订单的委托编号、标的代码、买卖方向、类型、委托量、已成交量、未成交量、限价/止损价、订单结构（OCO/Bracket）与状态。
-  - **交互快捷指令**：终端输入 `P` 随时刷新查看持仓；输入 `O` 随时刷新查看活动挂单。
-  - **单次命令行参数**：支持 `main.py -p`（持仓）、`main.py -o`（挂单）、`main.py -s`（全景看板）快速查询。
+  - **挂单看板**：清晰展示所有未成交订单的委托编号、标的代码、买卖方向、类型、委托量、已成交量、未成交量、限价/止损价、订单结构（OCO/Bracket/Limit）与状态。
+  - **交互快捷指令**：终端输入 `P` 查看持仓；输入 `O` 查看活动挂单；输入 `S` 一键扫盘。
+  - **单次命令行参数**：支持 `main.py -p`（持仓）、`main.py -o`（挂单）、`main.py -sc`（一键扫盘）、`main.py -s`（全景看板）。
 - **双重风控防御与移动止盈保本体系**：
-  - **Critic 独立合规审查**：校验标的池白名单、期权 DTE 周期约束 (14 ~ 60天)、权利金成本上限 (<=2.0%) 以及 7 天二元财报事件一票否决。
+  - **Critic 独立合规审查**：资产类别自适应校验（正股股数 vs 期权张数）、标的池白名单、期权 DTE 周期约束 (14 ~ 60天)、权利金成本上限 (<=2.0%) 以及 7 天二元财报事件一票否决。
   - **确定性 Python 硬风控 (RiskGuard)**：不依赖 LLM，代码级拦截正股单仓上限 (10%)、期权单笔权利金 (2.0%)、期权总敞口 (10.0%)、板块集中度 (30%) 及日内浮亏熔断 (5%)。
   - **阶梯保本 / 移动止盈 (Trailing Stop & Break-Even Protection)**：期权浮盈达 +25% 时止损线上移至成本价（BE 0%），浮盈达 +40% 时止损线上移锁定 +15% 利润。
 - **持仓巡检与期权临期守护引擎 (Cron Sentinel)**：
@@ -53,15 +61,15 @@
 ```mermaid
 flowchart TD
     A[启动主交互终端 main.py] --> B[同步 Alpaca 账户全景 & 实时宏观指标 VIX / HY Spread]
-    B --> C[高亮渲染 账户概览 / 当前持仓详情 / 未成交活动挂单]
-    C --> D[Regime Engine 裁定宏观体制并分配策略权重]
-    D --> E[拉取标的池实时行情快照 config/sp500_universe.json]
-    E --> F[操作员选择标的或输入快捷指令 P查看持仓 / O查看挂单]
-    F --> G[LangGraph 调度 5 大策略 Agent 并行辩论]
+    B --> C[EarningsCalendarProvider 读取/预加载 24h 财报日历缓存]
+    C --> D[高亮渲染 账户概览 / 当前持仓详情 / 未成交活动挂单]
+    D --> E[Regime Engine 裁定宏观体制并分配策略权重]
+    E --> F[操作员选择标的 或 输入 S 触发全市场多 Agent 协商扫盘]
+    F --> G[LangGraph 调度 5 大策略 Agent 并行辩论打分]
     G --> H{加权共识得分 >= 0.70 ?}
-    H -- 否 --> I[提示未达门槛，返回主菜单]
-    H -- 是 --> J[生成 HybridInvestmentMemo 并提交 Critic Agent 独立审查]
-    J -- 拒绝 --> K[输出违规原因，终止流程]
+    H -- 否 --> I[提示未达门槛 / 扫盘表格过滤，返回主菜单]
+    H -- 是 --> J[生成 HybridInvestmentMemo 提交 Critic Agent 独立审查]
+    J -- 拒绝 --> K[输出违规原因: 白名单/7天财报静默/字段缺失，终止下单]
     J -- 通过 --> L[CLI 高亮渲染正股/期权投资决策备忘录 Panel]
     L --> M{HitL 人机审批流}
     M -- R 驳回 / S 跳过 --> N[记录审计，返回主菜单]
@@ -85,22 +93,25 @@ AiAgentForTrading/
 │   ├── config.py                      # 回测参数配置与混合持仓数据模型
 │   └── hybrid_backtester.py           # 股票+期权价差混合回测核心引擎 (移动止盈/阶梯保本/临期平仓)
 ├── cli/
-│   └── terminal_ui.py                 # 终端富文本渲染看板 (持仓表/挂单表/决策备忘录 Panel)
+│   └── terminal_ui.py                 # 终端富文本渲染看板 (扫盘表/持仓表/挂单表/备忘录 Panel)
 ├── config/
 │   ├── settings.yaml                  # 全局系统配置 (Alpaca / Featherless / FRED / 风控阈值)
 │   ├── investment_memo.yaml           # Critic 独立审查合规规则 (正股 + 期权)
-│   └── sp500_universe.json            # 标普 500 核心标的池白名单 (40+ 核心蓝筹覆盖各行业)
+│   ├── sp500_universe.json            # 标普 500 核心标的池白名单 (40+ 核心蓝筹覆盖各行业)
+│   └── earnings_cache.json            # 本地 24 小时财报日历缓存 (自动生成/管理)
 ├── core/
 │   ├── agents/                        # 5 大策略研究 Agent 与 Critic Agent
-│   │   ├── base_agent.py              # 智能体基类 (抽象评估接口与 LLM 封装)
+│   │   ├── base_agent.py              # 智能体基类 (抽象评估接口、数据模型与 LLM 封装)
 │   │   ├── momentum_agent.py          # 动量趋势智能体
 │   │   ├── macro_agent.py             # 宏观基本面智能体
 │   │   ├── statarb_agent.py           # 统计套利智能体
 │   │   ├── contrarian_agent.py        # 逆向反转智能体
 │   │   ├── exotic_agent.py            # 衍生品与事件驱动智能体
 │   │   └── critic_agent.py            # 独立审查智能体 (一票否决权)
-│   ├── alpaca_client.py               # Alpaca API 统一网关客户端 (正股/期权/持仓/挂单/国债清扫)
+│   ├── alpaca_client.py               # Alpaca API 统一网关 (正股/期权/持仓/挂单/国债清扫)
 │   ├── consensus_engine.py            # 基于 LangGraph 的多智能体共识与混合资产决策引擎
+│   ├── earnings_provider.py           # 24 小时本地缓存财报日历提供器 (yfinance 提取与预加载)
+│   ├── market_scanner.py              # 五大策略智能体并发协商扫盘与买入机会推荐引擎
 │   ├── options_engine.py              # 期权牛市看涨价差 (Bull Call Spread) 定价与推荐引擎
 │   ├── regime_engine.py               # 宏观体制状态机引擎 (VIX / HY Spread)
 │   ├── risk_guard.py                  # 确定性 Python 硬风控网关 (正股 + 期权风控)
@@ -111,8 +122,11 @@ AiAgentForTrading/
 ├── sentinel/
 │   └── cron_sentinel.py               # 15分钟持仓健康巡检、期权临期平仓与OCO挂单守护引擎
 ├── tests/                             # 自动化单元测试与回测验证套件
-│   ├── test_alpaca_client.py          # Alpaca 接口集成与 Mock 单元测试
-│   ├── test_terminal_ui.py            # 终端持仓与挂单表格富文本渲染测试
+│   ├── test_alpaca_client.py          # Alpaca 接口集成与 Mock 单元测试 (含期权限价单)
+│   ├── test_critic_agent.py           # Critic 正股/期权双轨自适应审查与财报避让测试
+│   ├── test_earnings_provider.py      # 财报日历 24h 缓存持久化/TTL与扫盘集成测试
+│   ├── test_scanner.py                # 5-Agent 真实辩论扫盘与持仓/挂单标记测试
+│   ├── test_terminal_ui.py            # 终端扫盘表、持仓表与挂单表格富文本渲染测试
 │   ├── test_logger.py                 # 双通道日志输出与 3 天过期清理测试
 │   ├── test_fetch_regime_real.py      # 宏观数据拉取与 Regime 测试
 │   ├── test_historical_data_validation.py # 回测历史数据质量校验测试
@@ -120,7 +134,7 @@ AiAgentForTrading/
 │   ├── test_options_engine.py         # 期权定价、价差与希腊字母计算测试
 │   ├── test_regime_engine.py          # 宏观状态机逻辑测试
 │   └── test_risk_guard.py             # 硬风控全规则边界与混合资产测试
-├── main.py                            # CLI 交互式双轨交易终端主入口 (支持看板与参数查询)
+├── main.py                            # CLI 交互式双轨交易终端主入口 (支持扫盘/看板/参数查询)
 ├── run_backtest.py                    # 真实历史行情全资产回测执行脚本
 ├── pyproject.toml                     # 项目依赖与工具链配置 (uv / pytest)
 ├── requirements.txt                   # Python 依赖清单
@@ -185,23 +199,29 @@ uv run python main.py
 
 - **账户与宏观看板**：自动同步 Alpaca 账户净值、可用购买力、现金余额、SGOV 国债理财与宏观 Regime。
 - **当前持仓与活动挂单**：自动高亮渲染当前账户持仓详情与全部未成交订单。
-- **标的池与交易倾向**：输入标的代码或序号，选择 `AUTO` / `EQUITY` / `OPTION`。
+- **五大智能体扫盘与单点分析**：
+  - 输入 `S` 或 `SCAN`：启动五大智能体真实辩论扫盘，列出前 10 优质机会并支持输入序号直接进入审批下单。
+  - 输入标的代码（如 `NVDA`）：针对特定个股执行单点多智能体辩论与投资备忘录生成。
 - **快捷交互指令**：
+  - 输入 `S` / `SCAN`：即时执行全市场 5 智能体共识扫盘。
   - 输入 `P` / `POS`：即时刷新并单独查看持仓详情。
   - 输入 `O` / `ORD`：即时刷新并单独查看未成交活动挂单。
   - 输入 `exit` 或 `q`：随时安全退出系统。
 
-### 2. 命令行单次快速查询
+### 2. 命令行单次快捷指令
 
-无需进入主交互循环，直接在终端中快速查看：
+无需进入主交互循环，直接在终端中快速执行：
 ```powershell
-# 查看当前持仓详情
+# 执行全市场五大智能体共识一键扫盘并输出推荐榜单
+uv run python main.py --scan        # 或 main.py -sc
+
+# 查看当前实盘 / 模拟持仓详情
 uv run python main.py --positions   # 或 main.py -p
 
-# 查看未成交活动挂单
+# 查看当前未成交活动挂单
 uv run python main.py --orders      # 或 main.py -o
 
-# 完整查看账户概览、持仓与挂单看板
+# 查看综合账户全景、持仓与活动挂单看板
 uv run python main.py --status      # 或 main.py -s
 ```
 
