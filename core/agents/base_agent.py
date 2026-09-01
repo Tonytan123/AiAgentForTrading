@@ -52,7 +52,7 @@ class BaseFeatherlessAgent:
             response = await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": f"{self.system_prompt}\n务必仅以 JSON 格式返回: {{\"score\": 0.8, \"rationale\": \"...\"}}"},
+                    {"role": "system", "content": self.system_prompt.strip()},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.2,
