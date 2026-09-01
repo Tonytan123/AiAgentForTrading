@@ -157,10 +157,10 @@ class QuantBacktester:
             elif high >= pos.tp_price:
                 exit_price = pos.tp_price * (1.0 - self.cfg.slippage_bps / 10000.0)
                 reason = "TAKE_PROFIT"
-            # 触发 28 天超时平仓
-            elif pos.holding_days >= 28:
+            # 触发 60 天超时平仓
+            elif pos.holding_days >= 60:
                 exit_price = close * (1.0 - self.cfg.slippage_bps / 10000.0)
-                reason = "TIMEOUT_28D"
+                reason = "TIMEOUT_60D"
 
             if exit_price:
                 pnl = (exit_price - pos.entry_price) * pos.shares
