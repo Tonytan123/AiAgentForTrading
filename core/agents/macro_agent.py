@@ -1,4 +1,4 @@
-from core.agents.base_agent import BaseFeatherlessAgent
+from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
 
 class MacroAgent(BaseFeatherlessAgent):
     """宏观分析智能体，专注于宏观环境与行业契合度分析。"""
@@ -26,3 +26,23 @@ class MacroAgent(BaseFeatherlessAgent):
         - 识别与当前宏观环境最契合的行业板块。
         """
         super().__init__(name="Macro Agent", system_prompt=sys_prompt, **kwargs)
+
+    def heuristic_evaluate(self, ticker: str, context_data: dict) -> AgentEvaluation:
+        """宏观智能体量化启发式评估模型"""
+        regime = context_data.get("regime", "Bull_Trend")
+        vix = float(context_data.get("vix", 18.0))
+
+        if regime == "Bull_Trend":
+            score = 0.88
+            rat = f"宏观处于稳定低波多头 (VIX={vix:.1f})，顺势看多"
+        elif regime == "Neutral_Range":
+            score = 0.75
+            rat = f"宏观处于中性震荡区间 (VIX={vix:.1f})，精选优质资产"
+        elif regime == "High_Vol_Bear":
+            score = 0.45
+            rat = f"宏观高波偏空 (VIX={vix:.1f})，需严格防守"
+        else:
+            score = 0.20
+            rat = f"宏观恐慌危机 (VIX={vix:.1f})，严禁盲目做多"
+
+        return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)

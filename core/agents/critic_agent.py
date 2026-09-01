@@ -49,9 +49,18 @@ class CriticAgent:
             if cost_pct > self.rules.get("max_option_cost_pct", 0.02):
                 violations.append(f"期权单笔权利金占比 {cost_pct:.2%} 超过 2.0% 上限")
 
-        # 5. 必备字段完整性校验
+        # 5. 必备字段完整性校验 (自适应正股与期权资产类别)
         for field in self.rules.get("required_fields", []):
-            if field not in proposal or proposal[field] is None:
-                violations.append(f"缺少必要字段: {field}")
+            if field == "suggested_shares":
+                if asset_type == "EQUITY" and (field not in proposal or proposal[field] is None):
+                    violations.append("正股提案缺少必要字段: suggested_shares")
+                elif asset_type == "OPTION" and (proposal.get("suggested_contracts") is None and proposal.get("suggested_shares") is None):
+                    violations.append("期权提案缺少必要字段: suggested_contracts")
+            elif field == "ticker":
+                if proposal.get("ticker") is None and proposal.get("underlying_ticker") is None:
+                    violations.append("缺少必要字段: ticker")
+            else:
+                if field not in proposal or proposal[field] is None:
+                    violations.append(f"缺少必要字段: {field}")
 
         return (len(violations) == 0, violations)

@@ -140,13 +140,13 @@ def test_render_open_orders_table_with_data():
 
     table = render_open_orders_table(mock_orders)
     assert isinstance(table, Table)
-    assert len(table.columns) == 13
+    assert len(table.columns) == 11
     symbols = table.columns[2]._cells
     assert symbols == ["MSFT", "TSLA"]
     order_types = table.columns[4]._cells
     assert order_types == ["LIMIT", "STOP_LIMIT"]
-    unfilled = table.columns[7]._cells
-    assert unfilled == ["20", "8"]
+    progress = table.columns[5]._cells
+    assert progress == ["0/20", "2/10"]
 
 
 def test_render_open_orders_table_with_objects():

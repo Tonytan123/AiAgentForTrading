@@ -1,4 +1,4 @@
-from core.agents.base_agent import BaseFeatherlessAgent
+from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
 
 
 class MomentumAgent(BaseFeatherlessAgent):
@@ -27,3 +27,34 @@ class MomentumAgent(BaseFeatherlessAgent):
         - 避开盘整且波动率异常高的股票。
         """
         super().__init__(name="Momentum Agent", system_prompt=sys_prompt, **kwargs)
+
+    def heuristic_evaluate(self, ticker: str, context_data: dict) -> AgentEvaluation:
+        """动量智能体量化启发式评估模型"""
+        price = float(context_data.get("price", 100.0))
+        sma_20 = float(context_data.get("sma_20", price * 0.98))
+        rsi = float(context_data.get("rsi", 50.0))
+        vol_surge = float(context_data.get("volume_surge", 1.0))
+        chg_pct = float(context_data.get("change_pct", 0.0))
+
+        score = 0.50
+        reasons = []
+        if price > sma_20:
+            score += 0.25
+            reasons.append(f"站上SMA20 (${sma_20:.1f})")
+        if chg_pct > 0:
+            score += min(0.20, chg_pct * 0.05)
+            reasons.append(f"日内+{chg_pct:.1f}%")
+        elif chg_pct < -3.0:
+            score -= 0.15
+        if 40 <= rsi <= 65:
+            score += 0.15
+            reasons.append(f"RSI={rsi:.0f}健康多头")
+        elif rsi > 75:
+            score -= 0.20
+        if vol_surge >= 1.3:
+            score += 0.15
+            reasons.append(f"放量{vol_surge:.1f}x")
+
+        score = round(min(0.99, max(0.01, score)), 2)
+        rat = " | ".join(reasons) if reasons else "动量趋势平稳"
+        return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)

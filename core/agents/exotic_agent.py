@@ -1,4 +1,4 @@
-from core.agents.base_agent import BaseFeatherlessAgent
+from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
 
 class ExoticAgent(BaseFeatherlessAgent):
     """事件驱动型智能体，专注于利用特定事件窗口獲取收益。"""
@@ -26,3 +26,17 @@ class ExoticAgent(BaseFeatherlessAgent):
         - 盈利目标：在事件驱动的快速价格变动中迅速获利，或利用期权 vega 变化进行套利。
         """
         super().__init__(name="Exotic Agent", system_prompt=sys_prompt, **kwargs)
+
+    def heuristic_evaluate(self, ticker: str, context_data: dict) -> AgentEvaluation:
+        """衍生品/事件驱动智能体量化启发式评估模型"""
+        days_to_earnings = int(context_data.get("days_to_earnings", 30))
+        implied_vol = float(context_data.get("implied_vol", 0.35))
+
+        if days_to_earnings > 14:
+            score = 0.80
+            rat = f"财报窗口尚有 {days_to_earnings} 天，规避二元事件风险 (IV={implied_vol:.1%})"
+        else:
+            score = 0.55
+            rat = f"临近二元财报窗口 ({days_to_earnings}天)，存在事件波动率风险"
+
+        return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)
