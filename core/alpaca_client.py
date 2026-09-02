@@ -6,13 +6,14 @@ from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestBarRequest
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce, QueryOrderStatus
+from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce, QueryOrderStatus, ContractType
 from alpaca.trading.requests import (
     MarketOrderRequest,
     LimitOrderRequest,
     StopLossRequest,
     TakeProfitRequest,
     GetOrdersRequest,
+    GetOptionContractsRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,110 @@ class AlpacaGateway:
         order = self.client.submit_order(order_data=req)
         logger.info(f"期权限价单提交成功: Symbol={contract_symbol}, OrderID={order.id}")
         return str(order.id)
+
+    def get_option_contracts(
+        self,
+        underlying_symbol: str,
+        expiration_date_gte: Optional[str] = None,
+        expiration_date_lte: Optional[str] = None,
+        contract_type: Optional[ContractType] = None,
+        status: str = "active",
+        limit: int = 100,
+    ) -> List[Any]:
+        """通过 Alpaca Trading API 查询指定标的真实挂牌的期权合约链"""
+        try:
+            req = GetOptionContractsRequest(
+                underlying_symbols=[underlying_symbol],
+                status=status,
+                expiration_date_gte=expiration_date_gte,
+                expiration_date_lte=expiration_date_lte,
+                type=contract_type,
+                limit=limit,
+            )
+            res = self.trading_client.get_option_contracts(req)
+            if hasattr(res, "option_contracts") and res.option_contracts:
+                return res.option_contracts
+            elif isinstance(res, list):
+                return res
+            return []
+        except Exception as e:
+            logger.warning(f"获取 {underlying_symbol} 期权合约链异常: {e}")
+            return []
+
+    def get_best_option_contract(
+        self,
+        underlying_symbol: str,
+        target_strike: float,
+        option_type: str = "call",
+        min_dte: int = 14,
+        max_dte: int = 45,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        根据目标行权价与目标 DTE 窗口，从 Alpaca 真实期权链中匹配最优真实挂牌合约 (OCC 代码)
+        返回符合条件的合约字典，若无匹配或网络异常则返回 None
+        """
+        try:
+            import datetime
+            today = datetime.date.today()
+            date_gte = (today + datetime.timedelta(days=min_dte)).strftime("%Y-%m-%d")
+            date_lte = (today + datetime.timedelta(days=max_dte)).strftime("%Y-%m-%d")
+            c_type = ContractType.CALL if option_type.lower() == "call" else ContractType.PUT
+
+            contracts = self.get_option_contracts(
+                underlying_symbol=underlying_symbol,
+                expiration_date_gte=date_gte,
+                expiration_date_lte=date_lte,
+                contract_type=c_type,
+                status="active",
+                limit=100,
+            )
+            if not contracts:
+                return None
+
+            valid_contracts = []
+            for c in contracts:
+                if getattr(c, "tradable", True) is False:
+                    continue
+                try:
+                    s_price = float(c.strike_price)
+                    exp_d = c.expiration_date
+                    if isinstance(exp_d, str):
+                        exp_date = datetime.datetime.strptime(exp_d, "%Y-%m-%d").date()
+                    elif isinstance(exp_d, datetime.date):
+                        exp_date = exp_d
+                    else:
+                        continue
+                    dte = (exp_date - today).days
+                    valid_contracts.append({
+                        "contract": c,
+                        "strike_price": s_price,
+                        "expiration_date": exp_date.strftime("%Y-%m-%d"),
+                        "dte": dte,
+                        "strike_diff": abs(s_price - target_strike),
+                    })
+                except Exception:
+                    continue
+
+            if not valid_contracts:
+                return None
+
+            # 优先按行权价差距排序，次优先按 DTE 接近 30 天排序
+            valid_contracts.sort(key=lambda x: (x["strike_diff"], abs(x["dte"] - 30)))
+            best = valid_contracts[0]
+            c_obj = best["contract"]
+
+            return {
+                "contract_symbol": str(c_obj.symbol),
+                "strike_price": best["strike_price"],
+                "expiration_date": best["expiration_date"],
+                "dte": best["dte"],
+                "option_type": "Call" if option_type.lower() == "call" else "Put",
+                "close_price": float(c_obj.close_price) if getattr(c_obj, "close_price", None) else None,
+            }
+        except Exception as e:
+            logger.warning(f"匹配 {underlying_symbol} 最优期权合约异常: {e}")
+            return None
+
     def get_treasury_sweep_position(self, symbol: str = "SGOV") -> Optional[Dict[str, Any]]:
         """获取国债/货币基金 (如 SGOV) 的当前持仓状态 (包含总持仓与可用未锁定持仓)"""
         try:

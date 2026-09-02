@@ -280,4 +280,72 @@ class TestAlpacaGatewayMock:
         assert canceled == 1
         mock_instance.cancel_order_by_id.assert_called_once_with("ord-sgov-001")
 
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_get_option_contracts(self, _mock_data_client, mock_trading_client):
+        """测试查询期权合约链列表"""
+        mock_contract = MagicMock()
+        mock_contract.symbol = "AAPL260918C00330000"
+        mock_contract.strike_price = "330.00"
+        mock_contract.expiration_date = "2026-09-18"
+        mock_contract.type = "call"
+        mock_contract.tradable = True
+
+        mock_res = MagicMock()
+        mock_res.option_contracts = [mock_contract]
+
+        mock_instance = MagicMock()
+        mock_instance.get_option_contracts.return_value = mock_res
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        contracts = gateway.get_option_contracts(underlying_symbol="AAPL")
+        assert len(contracts) == 1
+        assert contracts[0].symbol == "AAPL260918C00330000"
+
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_get_best_option_contract(self, _mock_data_client, mock_trading_client):
+        """测试根据目标行权价与 DTE 智能挑选最优期权合约"""
+        import datetime
+        today = datetime.date.today()
+        exp_date_str = (today + datetime.timedelta(days=21)).strftime("%Y-%m-%d")
+
+        c1 = MagicMock()
+        c1.symbol = "AAPL260918C00320000"
+        c1.strike_price = "320.00"
+        c1.expiration_date = exp_date_str
+        c1.type = "call"
+        c1.tradable = True
+        c1.close_price = "12.50"
+
+        c2 = MagicMock()
+        c2.symbol = "AAPL260918C00330000"
+        c2.strike_price = "330.00"
+        c2.expiration_date = exp_date_str
+        c2.type = "call"
+        c2.tradable = True
+        c2.close_price = "8.20"
+
+        mock_res = MagicMock()
+        mock_res.option_contracts = [c1, c2]
+
+        mock_instance = MagicMock()
+        mock_instance.get_option_contracts.return_value = mock_res
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        # 目标行权价 331.3，最优匹配应该选 $330 的 c2 (距离只有 1.3)
+        best = gateway.get_best_option_contract(
+            underlying_symbol="AAPL",
+            target_strike=331.3,
+            option_type="call"
+        )
+        assert best is not None
+        assert best["contract_symbol"] == "AAPL260918C00330000"
+        assert best["strike_price"] == 330.00
+        assert best["dte"] == 21
+        assert best["option_type"] == "Call"
+
+
 
