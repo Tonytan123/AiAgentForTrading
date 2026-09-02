@@ -76,7 +76,8 @@ class ConsensusState(TypedDict):
 class ConsensusEngine:
     """基于 LangGraph 状态图的多智能体共识决策引擎 (支持正股/期权混合资产提案)"""
 
-    def __init__(self, **agent_kwargs):
+    def __init__(self, alpaca_client: Optional[Any] = None, **agent_kwargs):
+        self.alpaca_client = alpaca_client
         self.agents = {
             "Momentum Agent": MomentumAgent(**agent_kwargs),
             "Macro Agent": MacroAgent(**agent_kwargs),
@@ -174,11 +175,42 @@ class ConsensusEngine:
         proposal_id = f"PROP-{time.strftime('%Y%m%d')}-{ticker}-{'OPT' if choose_option else 'EQ'}-01"
 
         if choose_option:
-            # 构建期权提案 (Long Call, 限制权利金 <= 1.5% 账户总净值)
-            strike = round(current_price * 1.02, 1)
-            premium_est = round(current_price * 0.035, 2)
-            contract_cost = premium_est * 100
+            target_strike = current_price * 1.02
+            real_contract = None
+            if hasattr(self, "alpaca_client") and self.alpaca_client is not None:
+                try:
+                    real_contract = self.alpaca_client.get_best_option_contract(
+                        underlying_symbol=ticker,
+                        target_strike=target_strike,
+                        option_type="call",
+                        min_dte=14,
+                        max_dte=45,
+                    )
+                except Exception:
+                    real_contract = None
 
+            if real_contract:
+                strike = float(real_contract["strike_price"])
+                contract_symbol = real_contract["contract_symbol"]
+                expiration_date = real_contract["expiration_date"]
+                dte = real_contract["dte"]
+                option_type = real_contract["option_type"]
+                premium_est = real_contract.get("close_price") or round(current_price * 0.035, 2)
+            else:
+                import datetime
+                step = 5.0 if current_price >= 100 else 1.0
+                strike = round(target_strike / step) * step
+                today = datetime.date.today()
+                days_ahead = (4 - today.weekday() + 7) % 7 + 14
+                target_exp = today + datetime.timedelta(days=days_ahead)
+                expiration_date = target_exp.strftime("%Y-%m-%d")
+                dte = days_ahead
+                exp_code = target_exp.strftime("%y%m%d")
+                contract_symbol = f"{ticker}{exp_code}C{int(strike * 1000):08d}"
+                option_type = "Call"
+                premium_est = round(current_price * 0.035, 2)
+
+            contract_cost = premium_est * 100
             target_budget = total_equity * 0.015  # 预算 1.5% 权利金
             suggested_contracts = max(1, int(target_budget // contract_cost))
             total_premium = suggested_contracts * contract_cost
@@ -189,11 +221,11 @@ class ConsensusEngine:
                 underlying_ticker=ticker,
                 action="BUY_TO_OPEN",
                 current_underlying_price=current_price,
-                contract_symbol=f"{ticker}260918C{int(strike*1000):08d}",
-                option_type="Call",
+                contract_symbol=contract_symbol,
+                option_type=option_type,
                 strike_price=strike,
-                expiration_date="2026-09-18",
-                dte=18,
+                expiration_date=expiration_date,
+                dte=dte,
                 suggested_contracts=suggested_contracts,
                 premium_per_share=premium_est,
                 total_premium=round(total_premium, 2),

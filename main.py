@@ -190,7 +190,8 @@ async def main():
     regime_engine = RegimeEngine()
     consensus_engine = ConsensusEngine(
         api_key=featherless_key,
-        model_name=featherless_cfg.get("model", "Qwen/Qwen2.5-72B-Instruct")
+        model_name=featherless_cfg.get("model", "Qwen/Qwen2.5-72B-Instruct"),
+        alpaca_client=exec_client,
     )
     earnings_provider = EarningsCalendarProvider()
     scanner = MarketScanner(
