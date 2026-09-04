@@ -137,6 +137,27 @@ class TestAlpacaGatewayMock:
 
     @patch("core.alpaca_client.TradingClient")
     @patch("core.alpaca_client.StockHistoricalDataClient")
+    def test_mock_close_position_partial(self, _mock_data_client, mock_trading_client):
+        """测试部分平仓/卖出指定标的数量"""
+        mock_instance = MagicMock()
+        mock_instance.close_position.return_value = {
+            "symbol": "NVDA",
+            "status": "partial_closed",
+            "qty": "10",
+        }
+        mock_trading_client.return_value = mock_instance
+
+        gateway = AlpacaGateway()
+        res = gateway.close_position("NVDA", qty=10)
+
+        mock_instance.close_position.assert_called_once()
+        call_kwargs = mock_instance.close_position.call_args[1]
+        assert call_kwargs["symbol_or_asset_id"] == "NVDA"
+        assert call_kwargs["close_options"].qty == "10"
+        assert res["symbol"] == "NVDA"
+
+    @patch("core.alpaca_client.TradingClient")
+    @patch("core.alpaca_client.StockHistoricalDataClient")
     def test_mock_sweep_idle_cash_to_treasury(self, mock_data_client, mock_trading_client):
         """测试闲置现金自动清扫买入国债 ETF (SGOV)"""
         mock_acc = MagicMock()

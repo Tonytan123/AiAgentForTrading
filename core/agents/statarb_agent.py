@@ -1,4 +1,5 @@
 from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
+from cli.i18n import get_current_lang
 
 class StatArbAgent(BaseFeatherlessAgent):
     """统计套利智能体，专注于均值回归策略。"""
@@ -34,15 +35,28 @@ class StatArbAgent(BaseFeatherlessAgent):
         """统计套利智能体量化启发式评估模型"""
         spread_zscore = float(context_data.get("spread_zscore", 0.0))
         rolling_corr = float(context_data.get("rolling_corr", 0.80))
+        is_en = get_current_lang() == "en"
 
         if -1.5 <= spread_zscore <= 1.0:
             score = 0.80
-            rat = f"价差Z-Score={spread_zscore:.2f}处于健康均值通道 (相关性={rolling_corr:.2f})"
+            rat = (
+                f"Spread Z-Score={spread_zscore:.2f} in healthy channel (Corr={rolling_corr:.2f})"
+                if is_en
+                else f"价差Z-Score={spread_zscore:.2f}处于健康均值通道 (相关性={rolling_corr:.2f})"
+            )
         elif spread_zscore < -1.5:
             score = 0.72
-            rat = f"价差Z-Score={spread_zscore:.2f}处于负向偏离，具备均值回归向上动能"
+            rat = (
+                f"Spread Z-Score={spread_zscore:.2f} negative deviation, upward mean reversion dynamic"
+                if is_en
+                else f"价差Z-Score={spread_zscore:.2f}处于负向偏离，具备均值回归向上动能"
+            )
         else:
             score = 0.50
-            rat = f"价差Z-Score={spread_zscore:.2f}偏高，均线偏离度过大"
+            rat = (
+                f"Spread Z-Score={spread_zscore:.2f} elevated, wide mean divergence"
+                if is_en
+                else f"价差Z-Score={spread_zscore:.2f}偏高，均线偏离度过大"
+            )
 
         return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)

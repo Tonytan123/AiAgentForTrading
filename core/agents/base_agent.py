@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
+from cli.i18n import get_current_lang
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,9 @@ class BaseFeatherlessAgent:
     
     def heuristic_evaluate(self, ticker: str, context_data: Dict[str, Any]) -> AgentEvaluation:
         """基于量化规则特征的领域启发式打分 (在未配置 API Key 或 LLM 降级时提供精确专业评估)"""
-        return AgentEvaluation(agent_name=self.name, score=0.65, rationale=f"{self.name} 启发式量化评估完成")
+        is_en = get_current_lang() == "en"
+        rat = f"{self.name} heuristic quantitative evaluation completed" if is_en else f"{self.name} 启发式量化评估完成"
+        return AgentEvaluation(agent_name=self.name, score=0.65, rationale=rat)
 
     async def evaluate(self, ticker: str, context_data: Dict[str, Any]) -> AgentEvaluation:
         """调用 featherless LLM 进行交易策略价值评分和理由生成，异常或 Mock 模式下自动降级为专业启发式量化模型。
@@ -47,7 +50,11 @@ class BaseFeatherlessAgent:
         if not api_key or api_key == "default_mock_key":
             return self.heuristic_evaluate(ticker, context_data)
 
-        user_prompt = f"标的: {ticker}\n特征数据: {json.dumps(context_data, ensure_ascii=False)}"
+        is_en = get_current_lang() == "en"
+        if is_en:
+            user_prompt = f"Target Ticker: {ticker}\nFeature Data: {json.dumps(context_data, ensure_ascii=False)}\nIMPORTANT: Output your rationale strictly in English."
+        else:
+            user_prompt = f"标的: {ticker}\n特征数据: {json.dumps(context_data, ensure_ascii=False)}\n请务必使用中文输出决策理由 rationale。"
         try:
             response = await self.client.chat.completions.create(
                 model=self.model_name,

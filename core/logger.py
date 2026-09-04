@@ -66,6 +66,7 @@ def cleanup_expired_logs(
     log_dir: str = "logs",
     retention_days: int = 3,
     prefix: str = "sentinel",
+    lang: str = "en",
 ) -> int:
     """
     扫描并清理 logs 目录下已超过 retention_days (默认 3 天) 的历史日志文件
@@ -93,12 +94,18 @@ def cleanup_expired_logs(
             if mtime < cutoff_time:
                 os.remove(file_path)
                 deleted_count += 1
-                logging.getLogger("CronSentinel").info(
-                    f"[Log Cleanup] 已清理超过 {retention_days} 天的历史过期日志: {base_name}"
+                msg = (
+                    f"[Log Cleanup] Cleaned expired log older than {retention_days} days: {base_name}"
+                    if lang == "en"
+                    else f"[Log Cleanup] 已清理超过 {retention_days} 天的历史过期日志: {base_name}"
                 )
+                logging.getLogger("CronSentinel").info(msg)
         except Exception as e:
-            logging.getLogger("CronSentinel").warning(
-                f"[Log Cleanup] 清理日志文件 {base_name} 失败: {e}"
+            err_msg = (
+                f"[Log Cleanup] Failed to remove log file {base_name}: {e}"
+                if lang == "en"
+                else f"[Log Cleanup] 清理日志文件 {base_name} 失败: {e}"
             )
+            logging.getLogger("CronSentinel").warning(err_msg)
 
     return deleted_count

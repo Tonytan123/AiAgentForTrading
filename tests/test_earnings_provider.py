@@ -114,6 +114,9 @@ async def test_market_scanner_with_earnings_provider(tmp_path):
     # 验证扫描结果中 Exotic Agent 接收到了不同的 days_to_earnings 产生的不同评估
     evals_map = {r["symbol"]: r["agent_evaluations"] for r in results}
     if "AAPL" in evals_map and "Exotic Agent" in evals_map["AAPL"]:
-        assert "5天" in evals_map["AAPL"]["Exotic Agent"]["rationale"] or "5 天" in evals_map["AAPL"]["Exotic Agent"]["rationale"]
+        rat = evals_map["AAPL"]["Exotic Agent"]["rationale"]
+        assert any(k in rat for k in ["5天", "5 天", "5D", "5 d"])
     if "NVDA" in evals_map and "Exotic Agent" in evals_map["NVDA"]:
-        assert "30 天" in evals_map["NVDA"]["Exotic Agent"]["rationale"] or "30天" in evals_map["NVDA"]["Exotic Agent"]["rationale"]
+        rat = evals_map["NVDA"]["Exotic Agent"]["rationale"]
+        assert any(k in rat for k in ["30天", "30 天", "30D", "30 d", "30 days"])
+
