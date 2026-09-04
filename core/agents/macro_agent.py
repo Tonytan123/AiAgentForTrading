@@ -1,4 +1,5 @@
 from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
+from cli.i18n import get_current_lang
 
 class MacroAgent(BaseFeatherlessAgent):
     """宏观分析智能体，专注于宏观环境与行业契合度分析。"""
@@ -39,18 +40,19 @@ class MacroAgent(BaseFeatherlessAgent):
         """宏观智能体量化启发式评估模型"""
         regime = context_data.get("regime", "Bull_Trend")
         vix = float(context_data.get("vix", 18.0))
+        is_en = get_current_lang() == "en"
 
         if regime == "Bull_Trend":
             score = 0.88
-            rat = f"宏观处于稳定低波多头 (VIX={vix:.1f})，顺势看多"
+            rat = f"Macro in stable low-volatility bull regime (VIX={vix:.1f}), bullish trend following" if is_en else f"宏观处于稳定低波多头 (VIX={vix:.1f})，顺势看多"
         elif regime == "Neutral_Range":
             score = 0.75
-            rat = f"宏观处于中性震荡区间 (VIX={vix:.1f})，精选优质资产"
+            rat = f"Macro in neutral range (VIX={vix:.1f}), selective high-quality assets" if is_en else f"宏观处于中性震荡区间 (VIX={vix:.1f})，精选优质资产"
         elif regime == "High_Vol_Bear":
             score = 0.45
-            rat = f"宏观高波偏空 (VIX={vix:.1f})，需严格防守"
+            rat = f"Macro high-volatility bearish (VIX={vix:.1f}), strict defense required" if is_en else f"宏观高波偏空 (VIX={vix:.1f})，需严格防守"
         else:
             score = 0.20
-            rat = f"宏观恐慌危机 (VIX={vix:.1f})，严禁盲目做多"
+            rat = f"Macro panic crisis (VIX={vix:.1f}), avoid long positions" if is_en else f"宏观恐慌危机 (VIX={vix:.1f})，严禁盲目做多"
 
         return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)

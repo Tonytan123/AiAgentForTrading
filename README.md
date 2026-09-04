@@ -1,251 +1,278 @@
 # AiAgentForTrading
 
-基于 **Alpaca API**、**LangGraph 多智能体协同状态图** 与 **大语言模型（LLM）** 的全流程量化交易决策、正股与垂直价差期权双轨执行、动态移动止盈止损及风险治理系统。
+<p align="center">
+  <b>English</b> | <a href="README_zh.md">简体中文</a>
+</p>
 
-系统集成了 **实时宏观体制检测（Market Regime）**、**5 大策略研究智能体并行辩论与共识**、**正股/垂直价差期权混合资产提案生成（Hybrid Memo / Bull Call Spread）**、**独立 Critic 审查**、**CLI 人机协同决策治理（Human-in-the-Loop）**、**确定性硬风控拦截（RiskGuard）**、**持仓与期权临期守护引擎（Sentinel）**、**日志双通道与3天生命周期清理** 以及 **股票+期权多品种事件驱动回测引擎（HybridStrategyBacktester）**。
+An end-to-end autonomous quantitative trading, dual-track asset execution (Common Equity & Vertical Options Spreads), dynamic trailing stop, position sentinel, and deterministic risk governance system powered by **Alpaca Trading API**, **LangGraph Multi-Agent StateGraph**, and **Large Language Models (LLM)**.
 
----
-
-## 🌟 核心特性
-
-- **多智能体并行辩论与共识机制 (LangGraph StateGraph)**：
-  - **Momentum Agent (动量策略)**：基于均线突破 (SMA)、RSI 与成交量异动捕捉趋势。
-  - **Macro Agent (宏观基本面)**：结合 VIX 恐慌指数与 FRED 高收益信用利差评估市场风险偏好。
-  - **StatArb Agent (统计套利)**：监控与 SPY 标杆的滚动相关系数与价差 Z-Score 均值回归。
-  - **Contrarian Agent (逆向投资)**：利用市场恐慌指数与超卖程度逆势寻找非对称博弈机会。
-  - **Exotic Agent (衍生品与事件驱动)**：分析期权看涨/看跌比率 (PCR)、异常期权活动与真实财报窗口期。
-- **全市场五大智能体真实协商一键扫盘引擎 (Real 5-Agent Consensus Market Scanner)**：
-  - 并发执行标普 500 核心标的池的 5 大智能体真实辩论协商与加权打分。
-  - 严格准入门槛：仅输出加权共识得分 $\ge 0.70$ 的高置信机会，自动按得分降序排列。
-  - 智能状态标记：自动识别并标记 `[已持仓]`、`[挂单中]` 及 `[新机会]`，防止重复追高下单。
-  - 快捷指令与独立模式：交互终端输入 `S` 或命令行 `main.py --scan` 直接输出推荐表格并支持快捷选号直通下单。
-- **24 小时本地缓存财报日历提供器 (EarningsCalendarProvider)**：
-  - 基于 `yfinance` 与本地磁盘 JSON 持久化缓存，精准获取标的下次财报发布日及剩余天数 (`days_to_earnings`)。
-  - 24 小时 TTL 自动更新，支持多线程批量预加载（prefetch），无网络重复请求延迟。
-  - 联动 Exotic Agent 动态评估事件风险，联动 Critic Agent 严格执行 7 天财报静默期（Blackout Days）一票否决。
-- **动态宏观体制裁定 (Regime Engine)**：
-  - 自动识别 `Bull_Trend` (多头趋势)、`High_Vol_Bear` (高波熊市)、`Panic_Crisis` (恐慌危机) 与 `Neutral_Range` (震荡模式)。
-  - 依据宏观模式动态调配 5 大策略智能体的权重矩阵。
-- **正股 + 牛市看涨期权价差双轨资产决策与真实执行 (Hybrid Investment Memo & Execution)**：
-  - **正股配置（Common Stock）**：趋势明显或低波动环境下稳健配置，下发 Bracket OCO（止盈+止损）单。
-  - **牛市看涨期权（Bull Call / Long Call）**：共识高且高动量时推荐期权以小博大，通过 `place_option_limit_order` 真实提交期权限价单并同步挂单看板。
-  - **智能资产路由**：支持 `AUTO`（智能权衡）、`EQUITY`（仅正股）与 `OPTION`（仅期权）。
-- **持仓详情与活动挂单终端富文本看板 (Positions & Open Orders Dashboard)**：
-  - **持仓看板**：清晰展示正股、期权与国债 ETF 的持仓数量、均价、市价、市值、当日涨跌、浮动盈亏（金额与比例红绿配色）及组合总汇总。
-  - **挂单看板**：清晰展示所有未成交订单的委托编号、标的代码、买卖方向、类型、委托量、已成交量、未成交量、限价/止损价、订单结构（OCO/Bracket/Limit）与状态。
-  - **交互快捷指令**：终端输入 `P` 查看持仓；输入 `O` 查看活动挂单；输入 `S` 一键扫盘。
-  - **单次命令行参数**：支持 `main.py -p`（持仓）、`main.py -o`（挂单）、`main.py -sc`（一键扫盘）、`main.py -s`（全景看板）。
-- **双重风控防御与移动止盈保本体系**：
-  - **Critic 独立合规审查**：资产类别自适应校验（正股股数 vs 期权张数）、标的池白名单、期权 DTE 周期约束 (14 ~ 60天)、权利金成本上限 (<=2.0%) 以及 7 天二元财报事件一票否决。
-  - **确定性 Python 硬风控 (RiskGuard)**：不依赖 LLM，代码级拦截正股单仓上限 (10%)、期权单笔权利金 (2.0%)、期权总敞口 (10.0%)、板块集中度 (30%) 及日内浮亏熔断 (5%)。
-  - **阶梯保本 / 移动止盈 (Trailing Stop & Break-Even Protection)**：期权浮盈达 +25% 时止损线上移至成本价（BE 0%），浮盈达 +40% 时止损线上移锁定 +15% 利润。
-- **持仓巡检与期权临期守护引擎 (Cron Sentinel)**：
-  - **Sentinel 临期平仓 (DTE Guard)**：期权持仓 `DTE <= 3` 天时自动市价平仓锁定剩余价差价值，彻底规避行权交割与末日流动性风险。
-  - **孤儿持仓 OCO 自愈**：定时巡检正股持仓，自动清理单边残单并补发完整的 OCO（限价止盈 + 止损）双向挂单。
-  - **闲置资金智能清扫**：每日将多余闲置资金买入超短期国债 ETF (SGOV, 年化 ~4.5%)，动态适配可用购买力并自动防重。
-  - **日志双通道与 3 天自动清理**：控制台与 `logs/sentinel.log` 文件同步输出（UTF-8 编码），每日零点自动轮转，并自动扫描清理超过 3 天的历史过期日志。
-- **混合策略历史回测引擎 (HybridStrategyBacktester)**：
-  - 支持股票 + 期权价差在真实历史行情（Yahoo Finance / yfinance 真实日 K 与 VIX）下的事件驱动回测。
-  - 自动输出 **数据质量检验报告（Data Quality Report）**、**整体资产净值曲线（CAGR / MaxDD / Sharpe / Sortino）**、**分品种独立收益拆解（Stock vs Option）** 及 **出场原因归因明细**。
-- **人机协同终端治理 (HitL CLI Terminal)**：
-  - 丰富的富文本交互看板（`rich`），支持连续分析决策（REPL 循环）。
-  - 支持分资产类型参数微调（正股股数 vs 期权张数与止盈止损）。
-  - 一键执行审批 (`A`)、驳回 (`R`)、微调参数 (`E`) 或跳过 (`S`)，审批通过后自动下发 Bracket OCO 或期权限价单。
-- **不可变审计追踪 (Audit Trail)**：
-  - 所有订单下发、参数变更与持仓自愈记录均写入不可篡改的 `logs/audit_trail.jsonl`。
+The system integrates **Real-time Market Regime Detection**, **5-Strategy Agent Consensus & Debate**, **Hybrid Asset Proposal Generation (Equity / Bull Call Spread)**, **Independent Critic Gatekeeper**, **Interactive Human-in-the-Loop CLI Terminal**, **Deterministic RiskGuard**, **Cron Sentinel Position & DTE Guardian Engine**, **Full Bilingual Internationalization (i18n)**, **Dual-Channel 3-Day Log Rotation**, and **Hybrid Multi-Asset Event-Driven Backtesting Engine**.
 
 ---
 
-## 🏗️ 系统架构流程
+## 🌟 Key Features
+
+- **Multi-Agent Parallel Debate & Consensus Engine (LangGraph StateGraph)**:
+  - **Momentum Agent**: Captures breakout trends using SMA crossovers, RSI momentum, and volume surges.
+  - **Macro Agent**: Evaluates broader market risk appetite using VIX volatility and FRED High-Yield Credit Spreads.
+  - **StatArb Agent**: Tracks rolling correlation and spread Z-Score mean-reversion relative to SPY.
+  - **Contrarian Agent**: Identifies asymmetric risk-reward opportunities in extreme panic and oversold conditions.
+  - **Exotic Agent**: Analyzes Put/Call Ratio (PCR), unusual options flow, and earnings volatility event windows.
+- **5-Agent Real Consensus Market Scanner**:
+  - Concurrently executes full 5-agent debate and weighted scoring across the S&P 500 core universe.
+  - Strict admission threshold: Only outputs high-conviction opportunities with Consensus Score $\ge 0.70$, sorted descending by score.
+  - Status badges: Automatically tags tickers with `[POSITION]`, `[PENDING]`, or `[NEW]` to prevent chasing and duplicate orders.
+  - Shortcut and standalone mode: Input `S` in the terminal or run `main.py --scan` to output recommendation tables and submit direct orders by index.
+- **Full Bilingual Internationalization (i18n)**:
+  - Runtime language switching: Type `L`, `EN`, or `ZH` on the terminal homepage anytime.
+  - CLI startup flags: Pass `-l en` or `-l zh` to launch in your preferred language.
+  - Global configuration: Set default language (`en` or `zh`) in `config/settings.yaml`.
+  - Fully localized Agent rationales, dashboard tables, investment memos, and HitL governance prompts.
+  - Error diagnostics prioritize standard English for clarity and rapid troubleshooting.
+- **24-Hour Cached Earnings Calendar Provider (EarningsCalendarProvider)**:
+  - Built on `yfinance` with local disk JSON persistent caching to accurately track next earnings dates and remaining days (`days_to_earnings`).
+  - 24-hour TTL automatic refresh with multithreaded prefetching to eliminate redundant API calls.
+  - Coupled with Exotic Agent for event risk assessment and Critic Agent for 7-day earnings blackout veto.
+- **Dynamic Macro Regime Engine**:
+  - Automatically identifies `Bull_Trend`, `High_Vol_Bear`, `Panic_Crisis`, and `Neutral_Range`.
+  - Dynamically adjusts the 5-agent strategy weight matrix based on the prevailing macro state.
+- **Hybrid Asset Execution (Common Stock + Bull Call Spreads)**:
+  - **Common Stock**: Robust allocation in clear trends and lower volatility regimes via Bracket OCO (Take-Profit + Stop-Loss) orders.
+  - **Bull Call Spread (Options)**: Leverages high-consensus, high-momentum setups with defined risk via `place_option_limit_order`.
+  - **Smart Asset Routing**: Supports `AUTO` (smart balancing), `EQUITY` (stock only), and `OPTION` (options only).
+- **Rich Terminal UI & Positions / Open Orders Dashboard**:
+  - **Positions Dashboard**: Visualizes stock, options, and Treasury ETF holdings with quantity, average cost, market price, market value, intraday change, and unrealized P&L with color-coded styling.
+  - **Open Orders Dashboard**: Displays open order IDs, symbols, sides, types, quantities, unfilled sizes, limit/stop prices, order structures (OCO/Bracket/Limit), and status.
+  - **Interactive Shortcuts**: Press `P` for positions, `O` for open orders, `S` for market scanner, and `L` to toggle language.
+  - **One-off CLI Commands**: `main.py -p` (positions), `main.py -o` (orders), `main.py -sc` (scanner), `main.py -s` (full status).
+- **Dual-Layer Risk Defense & Trailing Stop Protection**:
+  - **Critic Independent Gatekeeper**: Asset-type adaptive validation, universe whitelist verification, options DTE constraints (14–60 days), max premium cost ($\le 2.0\%$), and 7-day earnings blackout veto.
+  - **Deterministic Python RiskGuard**: Non-LLM code-level hard limits on max single stock position (10%), single option premium (2.0%), total options portfolio exposure (10.0%), sector concentration (30%), and intraday loss circuit breaker (5%).
+  - **Trailing Stop & Break-Even Ladder**: Automatically moves stop loss to break-even (0%) at +25% options unrealized gain, and locks in +15% profit at +40% gain.
+- **Cron Sentinel Position & DTE Guardian**:
+  - **Sentinel DTE Guard**: Automatically market-closes option positions when `DTE <= 2` days to lock in spread value and eliminate assignment/expiration risks.
+  - **Orphan Position OCO Auto-Healing**: Periodically audits equity holdings, cleans up dangling single-leg orders, and attaches missing OCO bracket protection.
+  - **Idle Cash Treasury Sweep**: Sweeps excess idle cash into ultra-short Treasury ETF (SGOV, ~4.5% APY), dynamically sizing by available buying power.
+  - **Dual-Channel Logging & 3-Day Auto-Purge**: Console and `logs/sentinel.log` synchronized output with daily rotation and automatic cleanup of logs older than 3 days.
+- **Hybrid Multi-Asset Event-Driven Backtesting Engine (HybridStrategyBacktester)**:
+  - Historical simulation of combined stock and option spread strategies against real daily price and VIX data.
+  - Automated output of Data Quality Reports, Equity Curves (CAGR, MaxDD, Sharpe, Sortino), Asset-Class Performance Breakdown, and Exit Reason Attribution.
+- **Human-in-the-Loop CLI Governance (HitL)**:
+  - Interactive terminal REPL workflow powered by `rich`.
+  - In-place parameter fine-tuning for shares, contracts, stop-loss, and take-profit levels.
+  - Direct actions: Approve (`A`), Reject (`R`), Edit (`E`), or Skip (`S`).
+- **Immutable Audit Trail**:
+  - All submitted orders, parameter adjustments, and sentinel auto-healing events are recorded in `logs/audit_trail.jsonl`.
+
+---
+
+## 🏗️ System Architecture
 
 ```mermaid
 flowchart TD
-    A[启动主交互终端 main.py] --> B[同步 Alpaca 账户全景 & 实时宏观指标 VIX / HY Spread]
-    B --> C[EarningsCalendarProvider 读取/预加载 24h 财报日历缓存]
-    C --> D[高亮渲染 账户概览 / 当前持仓详情 / 未成交活动挂单]
-    D --> E[Regime Engine 裁定宏观体制并分配策略权重]
-    E --> F[操作员选择标的 或 输入 S 触发全市场多 Agent 协商扫盘]
-    F --> G[LangGraph 调度 5 大策略 Agent 并行辩论打分]
-    G --> H{加权共识得分 >= 0.70 ?}
-    H -- 否 --> I[提示未达门槛 / 扫盘表格过滤，返回主菜单]
-    H -- 是 --> J[生成 HybridInvestmentMemo 提交 Critic Agent 独立审查]
-    J -- 拒绝 --> K[输出违规原因: 白名单/7天财报静默/字段缺失，终止下单]
-    J -- 通过 --> L[CLI 高亮渲染正股/期权投资决策备忘录 Panel]
-    L --> M{HitL 人机审批流}
-    M -- R 驳回 / S 跳过 --> N[记录审计，返回主菜单]
-    M -- E 微调 --> O[微调正股股数/期权张数与止盈止损]
-    M -- A 通过 / 完成微调 --> P[RiskGuard 确定性硬风控拦截校验]
-    P -- 拦截违规 --> Q[阻断下单，输出风控警报]
-    P -- 校验通过 --> R[向 Alpaca API 下发 Bracket OCO 正股单或期权限价单]
-    R --> S[写入不可变审计日志 logs/audit_trail.jsonl]
-    S --> T[按 Enter 键循环进入下一轮决策]
+    A[Launch CLI Terminal main.py] --> B[Sync Alpaca Account & Real-Time Macro VIX / HY Spread]
+    B --> C[EarningsCalendarProvider Load/Prefetch 24h Cache]
+    C --> D[Render Account Overview / Positions / Open Orders]
+    D --> E[Regime Engine Classifies Macro State & Adjusts Weights]
+    E --> F[Operator Selects Symbol or Inputs 'S' for Market Scan]
+    F --> G[LangGraph Orchestrates 5 Strategy Agents in Parallel Debate]
+    G --> H{Weighted Consensus Score >= 0.70 ?}
+    H -- No --> I[Below Threshold / Filtered Out, Return to Menu]
+    H -- Yes --> J[Generate HybridInvestmentMemo & Submit to Critic Agent]
+    J -- Reject --> K[Output Violation: Whitelist / 7d Earnings / Missing Fields]
+    J -- Pass --> L[CLI Renders Investment Memo Panel]
+    L --> M{HitL Approval Flow}
+    M -- R Reject / S Skip --> N[Log Audit Trail, Return to Menu]
+    M -- E Edit --> O[Fine-tune Shares / Contracts / Stops / Targets]
+    M -- A Approve / Edited --> P[RiskGuard Deterministic Hard Risk Check]
+    P -- Blocked --> Q[Halt Order & Output Risk Alert]
+    P -- Passed --> R[Submit Bracket OCO Stock Order or Option Limit Order to Alpaca]
+    R --> S[Append to Immutable Audit Trail logs/audit_trail.jsonl]
+    S --> T[Press Enter for Next Cycle]
 ```
 
 ---
 
-## 📁 项目目录结构
+## 📁 Directory Structure
 
 ```text
 AiAgentForTrading/
-├── backtest/                          # 历史回测系统
-│   ├── __init__.py                    # 回测模块导出
-│   ├── backtest_engine.py             # 经典事件驱动回测引擎
-│   ├── config.py                      # 回测参数配置与混合持仓数据模型
-│   └── hybrid_backtester.py           # 股票+期权价差混合回测核心引擎 (移动止盈/阶梯保本/临期平仓)
+├── backtest/                          # Historical backtesting framework
+│   ├── __init__.py                    # Module export
+│   ├── backtest_engine.py             # Event-driven backtest engine
+│   ├── config.py                      # Backtest parameters & position data models
+│   └── hybrid_backtester.py           # Stock + Options hybrid backtester (trailing stops, DTE guard)
 ├── cli/
-│   └── terminal_ui.py                 # 终端富文本渲染看板 (扫盘表/持仓表/挂单表/备忘录 Panel)
+│   ├── __init__.py                    # CLI package initialization
+│   ├── i18n.py                        # Bilingual i18n module (EN/ZH translation & state)
+│   └── terminal_ui.py                 # Rich terminal UI components (scanner, positions, orders, memo)
 ├── config/
-│   ├── settings.yaml                  # 全局系统配置 (Alpaca / Featherless / FRED / 风控阈值)
-│   ├── investment_memo.yaml           # Critic 独立审查合规规则 (正股 + 期权)
-│   ├── sp500_universe.json            # 标普 500 核心标的池白名单 (40+ 核心蓝筹覆盖各行业)
-│   └── earnings_cache.json            # 本地 24 小时财报日历缓存 (自动生成/管理)
+│   ├── settings.yaml                  # System configuration (Alpaca, Featherless, FRED, Language, Risk)
+│   ├── investment_memo.yaml           # Critic Agent compliance rules (Stock & Options)
+│   ├── sp500_universe.json            # S&P 500 core universe whitelist (40+ blue chips)
+│   └── earnings_cache.json            # Local 24-hour earnings calendar cache
 ├── core/
-│   ├── agents/                        # 5 大策略研究 Agent 与 Critic Agent
-│   │   ├── base_agent.py              # 智能体基类 (抽象评估接口、数据模型与 LLM 封装)
-│   │   ├── momentum_agent.py          # 动量趋势智能体
-│   │   ├── macro_agent.py             # 宏观基本面智能体
-│   │   ├── statarb_agent.py           # 统计套利智能体
-│   │   ├── contrarian_agent.py        # 逆向反转智能体
-│   │   ├── exotic_agent.py            # 衍生品与事件驱动智能体
-│   │   └── critic_agent.py            # 独立审查智能体 (一票否决权)
-│   ├── alpaca_client.py               # Alpaca API 统一网关 (正股/期权/持仓/挂单/国债清扫)
-│   ├── consensus_engine.py            # 基于 LangGraph 的多智能体共识与混合资产决策引擎
-│   ├── earnings_provider.py           # 24 小时本地缓存财报日历提供器 (yfinance 提取与预加载)
-│   ├── market_scanner.py              # 五大策略智能体并发协商扫盘与买入机会推荐引擎
-│   ├── options_engine.py              # 期权牛市看涨价差 (Bull Call Spread) 定价与推荐引擎
-│   ├── regime_engine.py               # 宏观体制状态机引擎 (VIX / HY Spread)
-│   ├── risk_guard.py                  # 确定性 Python 硬风控网关 (正股 + 期权风控)
-│   └── logger.py                      # 统一日志基础设施 (Console+File双通道与3天过期清理)
-├── logs/                              # 日志与审计追踪存储目录
-│   ├── sentinel.log                   # 巡检守护每日轮转持久化日志
-│   └── audit_trail.jsonl              # 真实交易审计追踪日志 (JSON Lines)
+│   ├── agents/                        # 5 Strategy Agents + Critic Agent
+│   │   ├── base_agent.py              # Base agent class with bilingual prompt support
+│   │   ├── momentum_agent.py          # Momentum trend strategy agent
+│   │   ├── macro_agent.py             # Macro fundamental analysis agent
+│   │   ├── statarb_agent.py           # Statistical arbitrage & mean-reversion agent
+│   │   ├── contrarian_agent.py        # Contrarian & oversold reversal agent
+│   │   ├── exotic_agent.py            # Derivatives & event-driven agent
+│   │   └── critic_agent.py            # Independent compliance & veto agent
+│   ├── alpaca_client.py               # Unified Alpaca API gateway (Stock, Options, Orders, SGOV sweep)
+│   ├── consensus_engine.py            # LangGraph multi-agent consensus & hybrid decision engine
+│   ├── earnings_provider.py           # 24-hour cached earnings calendar provider (yfinance)
+│   ├── market_scanner.py              # 5-Agent parallel consensus scanner
+│   ├── options_engine.py              # Bull Call Spread pricing & selection engine
+│   ├── regime_engine.py               # Macro market regime engine (VIX / HY Spread)
+│   ├── risk_guard.py                  # Deterministic Python hard risk gateway
+│   └── logger.py                      # Logging infrastructure (Console + File dual-channel, 3-day purge)
+├── logs/                              # Logs and audit trail storage
+│   ├── sentinel.log                   # Sentinel guardian daily rotation log
+│   └── audit_trail.jsonl              # Live trading audit trail (JSON Lines)
 ├── sentinel/
-│   └── cron_sentinel.py               # 15分钟持仓健康巡检、期权临期平仓与OCO挂单守护引擎
-├── tests/                             # 自动化单元测试与回测验证套件
-│   ├── test_alpaca_client.py          # Alpaca 接口集成与 Mock 单元测试 (含期权限价单)
-│   ├── test_critic_agent.py           # Critic 正股/期权双轨自适应审查与财报避让测试
-│   ├── test_earnings_provider.py      # 财报日历 24h 缓存持久化/TTL与扫盘集成测试
-│   ├── test_scanner.py                # 5-Agent 真实辩论扫盘与持仓/挂单标记测试
-│   ├── test_terminal_ui.py            # 终端扫盘表、持仓表与挂单表格富文本渲染测试
-│   ├── test_logger.py                 # 双通道日志输出与 3 天过期清理测试
-│   ├── test_fetch_regime_real.py      # 宏观数据拉取与 Regime 测试
-│   ├── test_historical_data_validation.py # 回测历史数据质量校验测试
-│   ├── test_hybrid_backtester.py      # 混合回测引擎风控与交易逻辑测试
-│   ├── test_options_engine.py         # 期权定价、价差与希腊字母计算测试
-│   ├── test_regime_engine.py          # 宏观状态机逻辑测试
-│   └── test_risk_guard.py             # 硬风控全规则边界与混合资产测试
-├── main.py                            # CLI 交互式双轨交易终端主入口 (支持扫盘/看板/参数查询)
-├── run_backtest.py                    # 真实历史行情全资产回测执行脚本
-├── pyproject.toml                     # 项目依赖与工具链配置 (uv / pytest)
-├── requirements.txt                   # Python 依赖清单
-└── README.md                          # 项目说明文档
+│   ├── __init__.py                    # Sentinel package initialization
+│   └── cron_sentinel.py               # 15-min health guardian, DTE exit & OCO repair engine
+├── tests/                             # Automated test suite
+│   ├── test_alpaca_client.py          # Alpaca integration & mock tests
+│   ├── test_critic_agent.py           # Critic adaptive validation tests
+│   ├── test_earnings_provider.py      # Earnings calendar 24h cache & TTL tests
+│   ├── test_scanner.py                # 5-Agent consensus scanner tests
+│   ├── test_terminal_ui.py            # Rich terminal dashboard rendering tests
+│   ├── test_logger.py                 # Logger dual-channel & log rotation tests
+│   ├── test_fetch_regime_real.py      # Real macro data fetch tests
+│   ├── test_historical_data_validation.py # Backtest data quality validation tests
+│   ├── test_hybrid_backtester.py      # Hybrid backtesting engine tests
+│   ├── test_options_engine.py         # Option pricing and Greeks tests
+│   ├── test_regime_engine.py          # Macro regime state machine tests
+│   └── test_risk_guard.py             # RiskGuard hard rules boundary tests
+├── main.py                            # Interactive CLI trading terminal
+├── run_backtest.py                    # Real-data hybrid backtest runner
+├── pyproject.toml                     # Project packaging & dependencies (uv / pytest)
+├── requirements.txt                   # Dependencies list
+├── README.md                          # English documentation (this file)
+└── README_zh.md                       # Simplified Chinese documentation
 ```
 
 ---
 
-## 🚀 快速上手
+## 🚀 Quick Start
 
-### 1. 环境准备
-推荐使用高性能 Python 包管理器 [uv](https://github.com/astral-sh/uv)：
+### 1. Prerequisites
+We recommend using the high-performance Python package manager [uv](https://github.com/astral-sh/uv):
 
 ```powershell
-# 克隆仓库
+# Clone the repository
 git clone https://github.com/Tonytan123/AiAgentForTrading.git
 cd AiAgentForTrading
 
-# 安装并同步项目所有依赖
+# Install and synchronize dependencies
 uv sync
 ```
 
-### 2. 配置 API 凭证
-系统支持 **`config/settings.yaml`**、**`.env` 文件** 或 **系统环境变量** 三种方式进行密钥配置：
+### 2. Configure API Credentials
+The system supports configuration via **`config/settings.yaml`**, **`.env` file**, or **environment variables**:
 
-#### 方式 A：直接编辑 `config/settings.yaml`
+#### Option A: Edit `config/settings.yaml`
 ```yaml
 alpaca:
-  api_key: "你的_ALPACA_API_KEY"
-  secret_key: "你的_ALPACA_SECRET_KEY"
+  api_key: "YOUR_ALPACA_API_KEY"
+  secret_key: "YOUR_ALPACA_SECRET_KEY"
   paper: true
+
+system:
+  language: "en"  # UI language: "en" (English, default) or "zh" (Chinese)
 
 featherless:
   base_url: "https://api.featherless.ai/v1"
-  api_key: "你的_FEATHERLESS_API_KEY"
+  api_key: "YOUR_FEATHERLESS_API_KEY"
   model: "Qwen/Qwen2.5-72B-Instruct"
 
 fred:
-  api_key: "你的_FRED_API_KEY"
+  api_key: "YOUR_FRED_API_KEY"
 ```
 
-> 💡 **安全提示**：在本地 `config/settings.yaml` 中配置真实密钥后，建议运行 `git update-index --skip-worktree config/settings.yaml` 防止 Git 意外提交私密配置。
+> 💡 **Security Tip**: After setting real credentials in `config/settings.yaml`, run `git update-index --skip-worktree config/settings.yaml` to prevent accidental Git commits.
 
-#### 方式 B：使用环境变量配置
+#### Option B: Use Environment Variables
 ```powershell
 # PowerShell (Windows)
-$env:ALPACA_API_KEY="你的_ALPACA_KEY"
-$env:ALPACA_SECRET_KEY="你的_ALPACA_SECRET"
-$env:FEATHERLESS_API_KEY="你的_FEATHERLESS_KEY"
-$env:FRED_API_KEY="你的_FRED_KEY"
+$env:ALPACA_API_KEY="YOUR_ALPACA_KEY"
+$env:ALPACA_SECRET_KEY="YOUR_ALPACA_SECRET"
+$env:FEATHERLESS_API_KEY="YOUR_FEATHERLESS_KEY"
+$env:FRED_API_KEY="YOUR_FRED_KEY"
 ```
 
 ---
 
-## 💻 运行系统
+## 💻 Running the System
 
-### 1. 启动交互式交易终端 (CLI Terminal)
+### 1. Interactive CLI Trading Terminal
 
 ```powershell
+# Launch with default settings (English by default)
 uv run python main.py
+
+# Launch explicitly in English
+uv run python main.py -l en
+
+# Launch explicitly in Chinese
+uv run python main.py -l zh
 ```
 
-- **账户与宏观看板**：自动同步 Alpaca 账户净值、可用购买力、现金余额、SGOV 国债理财与宏观 Regime。
-- **当前持仓与活动挂单**：自动高亮渲染当前账户持仓详情与全部未成交订单。
-- **五大智能体扫盘与单点分析**：
-  - 输入 `S` 或 `SCAN`：启动五大智能体真实辩论扫盘，列出前 10 优质机会并支持输入序号直接进入审批下单。
-  - 输入标的代码（如 `NVDA`）：针对特定个股执行单点多智能体辩论与投资备忘录生成。
-- **快捷交互指令**：
-  - 输入 `S` / `SCAN`：即时执行全市场 5 智能体共识扫盘。
-  - 输入 `P` / `POS`：即时刷新并单独查看持仓详情。
-  - 输入 `O` / `ORD`：即时刷新并单独查看未成交活动挂单。
-  - 输入 `exit` 或 `q`：随时安全退出系统。
+- **Runtime Language Switching**:
+  - Type `L` or `LANG`: Toggle between English and Chinese instantly.
+  - Type `EN`: Switch directly to English.
+  - Type `ZH`: Switch directly to Chinese.
+- **5-Agent Market Scan & Single Ticker Analysis**:
+  - Type `S` or `SCAN`: Trigger 5-agent consensus scanning across the S&P 500 universe. Displays the top opportunities and lets you enter a row number to review and order.
+  - Enter a ticker symbol (e.g. `NVDA`): Performs targeted multi-agent analysis and generates an investment memo.
+- **Interactive Shortcuts**:
+  - `P` / `POS`: Refresh the positions dashboard with one-click sell order options.
+  - `O` / `ORD`: Refresh and inspect/cancel active open orders.
+  - `exit` / `q`: Exit cleanly.
 
-### 2. 命令行单次快捷指令
+### 2. One-Off CLI Commands
 
-无需进入主交互循环，直接在终端中快速执行：
+Execute tasks directly without entering the interactive loop:
 ```powershell
-# 执行全市场五大智能体共识一键扫盘并输出推荐榜单
-uv run python main.py --scan        # 或 main.py -sc
+# Scan market and output top recommendations
+uv run python main.py --scan -l en      # English output
+uv run python main.py --scan -l zh      # Chinese output
 
-# 查看当前实盘 / 模拟持仓详情
-uv run python main.py --positions   # 或 main.py -p
+# View active positions
+uv run python main.py --positions       # or main.py -p
 
-# 查看当前未成交活动挂单
-uv run python main.py --orders      # 或 main.py -o
+# View active open orders
+uv run python main.py --orders          # or main.py -o
 
-# 查看综合账户全景、持仓与活动挂单看板
-uv run python main.py --status      # 或 main.py -s
+# View comprehensive account overview, positions, and orders
+uv run python main.py --status          # or main.py -s
 ```
 
-### 3. 运行 15 分钟持仓守护与期权临期巡检 (Cron Sentinel)
+### 3. Run 15-Minute Cron Sentinel Guardian
 
-自动检查持仓健康度、补齐 OCO 保护单、执行期权临期平仓与闲置资金国债清扫：
+Monitors position health, heals missing OCO protective orders, enforces DTE exit for expiring options, and sweeps idle cash into Treasury ETF:
 
 ```powershell
-# 启动常驻后台守护进程 (每 15 分钟循环巡检，自动清理过期日志)
-uv run python -m sentinel.cron_sentinel --daemon
+# Start daemon process (runs every 15 mins with 3-day log rotation)
+uv run python -m sentinel.cron_sentinel --daemon -l en   # English logs (default)
+uv run python -m sentinel.cron_sentinel --daemon -l zh   # Chinese logs
 
-# 或执行单次巡检与自我修复
-uv run python -m sentinel.cron_sentinel
+# Run a single inspection and self-healing cycle
+uv run python -m sentinel.cron_sentinel -l en
 ```
 
-### 4. 运行股票与期权混合策略历史回测
+### 4. Run Hybrid Strategy Backtester
 
-拉取 30+ 支标普 500 核心标的与 VIX 真实历史日 K，模拟多智能体共识与价差策略：
+Runs an event-driven backtest on 30+ S&P 500 blue chips and VIX historical daily data:
 
 ```powershell
 uv run python run_backtest.py
 ```
 
-### 5. 运行全套自动化测试套件
+### 5. Run Automated Test Suite
 
 ```powershell
 uv run pytest tests/ -v
@@ -253,46 +280,46 @@ uv run pytest tests/ -v
 
 ---
 
-## 🐳 Docker 容器化部署与运行
+## 🐳 Docker Deployment
 
 ```bash
-# 1. 构建 Docker 镜像
+# 1. Build Docker image
 docker build -t aiagentfortrading:latest .
 
-# 2. 启动交互式交易终端
+# 2. Run interactive trading terminal
 docker run -it --rm \
   -v ${PWD}/config:/app/config \
   -v ${PWD}/logs:/app/logs \
-  -e ALPACA_API_KEY="你的KEY" \
-  -e ALPACA_SECRET_KEY="你的SECRET" \
-  -e FEATHERLESS_API_KEY="你的FEATHERLESS_KEY" \
+  -e ALPACA_API_KEY="YOUR_KEY" \
+  -e ALPACA_SECRET_KEY="YOUR_SECRET" \
+  -e FEATHERLESS_API_KEY="YOUR_KEY" \
   aiagentfortrading:latest python main.py
 
-# 3. 使用 Docker Compose 一键启动守护进程
+# 3. Start Sentinel daemon with Docker Compose
 docker compose up -d sentinel
 ```
 
 ---
 
-## ⚙️ 核心风控规则速查
+## ⚙️ Core Risk Rules Matrix
 
-| 风控规则 | 阈值标准 | 触发行为与说明 |
+| Rule | Threshold | Trigger & Action |
 | :--- | :--- | :--- |
-| **正股单仓上限** | `<= 10.0%` | 限制单一股票仓位占用总净值比例 |
-| **期权单笔权利金** | `<= 2.0%` | 严格限制单一期权价差单笔净支出 |
-| **期权总持仓敞口** | `<= 10.0%` | 控制全部期权组合总权利金暴露 |
-| **单一板块敞口** | `<= 30.0%` | 基于行业分类控制集中度风险 |
-| **日内回撤熔断** | `<= 5.0%` | 单日累计浮亏触及阈值全系统熔断开仓 |
-| **财报静默期** | `<= 7 天` | 7 天内有二元财报事件一票否决 |
-| **期权 DTE 周期** | `14 ~ 60 天` | 严禁 0DTE 末日期权交易，保障充足时间价值 |
-| **Sentinel 临期平仓** | `DTE <= 3 天` | 自动平仓锁定价差，规避行权交割与末日流动性风险 |
-| **孤儿持仓 OCO 自愈** | `缺失保护单` | 自动补齐带有止盈与止损的 OCO 双向保护单 |
-| **阶梯移动保本止盈** | `+25% / +40%` | 浮盈达 +25% 止损上移至成本价；达 +40% 锁定 +15% 利润 |
-| **正股锚定止损** | `-4.0%` | 底层正股价格跌破支撑线时联动平仓期权 |
-| **日志生命周期管理** | `3 天` | 控制台与文件双通道记录，每日自动清理 3 天前历史日志 |
+| **Max Single Stock Position** | `$\le 10.0\%$` | Caps portfolio equity exposure per symbol |
+| **Max Option Premium** | `$\le 2.0\%$` | Limits net premium paid per option spread |
+| **Total Options Exposure** | `$\le 10.0\%$` | Limits aggregate premium across all active options |
+| **Sector Concentration** | `$\le 30.0\%$` | Mitigates industry-specific concentration risk |
+| **Intraday Loss Circuit Breaker** | `$\le 5.0\%$` | Halts new order entry on severe intraday drawdowns |
+| **Earnings Blackout Window** | `$\le 7 \text{ days}$` | Vetoes entries within 7 days of binary earnings events |
+| **Option DTE Target** | `14 ~ 60 \text{ days}` | Prohibits 0DTE trading; ensures adequate time value |
+| **Sentinel DTE Guard** | `\text{DTE} \le 2 \text{ days}` | Market-closes options to lock value and eliminate assignment risk |
+| **Orphan Position OCO Healing** | `Missing OCO` | Automatically attaches Bracket OCO (Take-Profit & Stop-Loss) |
+| **Trailing Stop / Break-Even** | `+25\% / +40\%` | Shifts stop to BE (0%) at +25% gain; locks +15% profit at +40% |
+| **Underlying Equity Stop-Loss** | `-4.0\%` | Closes options spread when underlying breaches support level |
+| **Log Lifecycle Management** | `3 \text{ days}` | Dual-channel logging; automatically deletes logs older than 3 days |
 
 ---
 
-## 📜 许可证
+## 📜 License
 
-本项目采用 [MIT License](LICENSE) 许可证。
+This project is licensed under the [MIT License](LICENSE).

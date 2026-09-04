@@ -1,4 +1,5 @@
 from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
+from cli.i18n import get_current_lang
 
 class ContrarianAgent(BaseFeatherlessAgent):
     """逆向投资智能体，专注于在市场过度恐慌时寻找反转机会。"""
@@ -35,15 +36,20 @@ class ContrarianAgent(BaseFeatherlessAgent):
         """逆向投资智能体量化启发式评估模型"""
         oversold_score = float(context_data.get("oversold_score", 0.10))
         panic_index = float(context_data.get("panic_index", 25.0))
+        is_en = get_current_lang() == "en"
 
         if oversold_score >= 0.50:
             score = 0.85
-            rat = f"超卖反弹因子={oversold_score:.2f}处于极端超卖，逆向非对称赔率极高"
+            rat = (
+                f"Oversold rebound factor={oversold_score:.2f} (Extreme oversold), high contrarian asymmetric upside"
+                if is_en
+                else f"超卖反弹因子={oversold_score:.2f}处于极端超卖，逆向非对称赔率极高"
+            )
         elif oversold_score >= 0.20:
             score = 0.75
-            rat = "洗盘回调企稳，情绪释放充分"
+            rat = "Pullback stabilized, sentiment well-flushed" if is_en else "洗盘回调企稳，情绪释放充分"
         else:
             score = 0.65
-            rat = f"情绪中性稳定 (恐慌指数={panic_index:.1f})"
+            rat = f"Neutral stable sentiment (Panic Index={panic_index:.1f})" if is_en else f"情绪中性稳定 (恐慌指数={panic_index:.1f})"
 
         return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)

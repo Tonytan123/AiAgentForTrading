@@ -16,7 +16,7 @@ import requests
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
@@ -38,7 +38,10 @@ from cli.terminal_ui import (
     print_positions_table,
     print_open_orders_table,
     print_scanner_results,
+    _safe_get,
+    _safe_float,
 )
+from cli.i18n import t, get_current_lang, set_current_lang, toggle_lang, LANG_ZH, LANG_EN
 
 console = Console()
 
@@ -162,20 +165,281 @@ def fetch_tickers_snapshots(
     return snapshots_data
 
 
-async def main():
-    parser = argparse.ArgumentParser(description="AiAgentForTrading 交互式量化交易系统终端")
-    parser.add_argument("-p", "--positions", action="store_true", help="直接在命令行显示当前持仓详情并退出")
-    parser.add_argument("-o", "--orders", action="store_true", help="直接在命令行显示当前未成交活动挂单并退出")
-    parser.add_argument("-s", "--status", action="store_true", help="直接在命令行显示完整账户概览、持仓及挂单并退出")
-    parser.add_argument("-sc", "--scan", action="store_true", help="直接在命令行执行全市场一键扫盘并输出推荐买入标的后退出")
-    args = parser.parse_args()
+def handle_positions_menu(exec_client: AlpacaExecutionClient, console: Console) -> None:
+    """
+    持仓详情看板及交互式卖出管理菜单 / Position Management Menu
+    """
+    while True:
+        console.print(f"\n[bold cyan]{t('connecting_alpaca')}[/bold cyan]")
+        try:
+            latest_pos = exec_client.get_positions()
+        except Exception as e:
+            console.print(f"[bold red]{t('sell_failed', error=e)}[/bold red]")
+            Prompt.ask(f"\n{t('press_enter_back')}", default="")
+            break
 
-    console.print("\n[bold cyan]=================================================================[/bold cyan]")
-    console.print("[bold cyan]   交互式多智能体量化交易系统 (正股 + Alpaca 期权双轨终端)        [/bold cyan]")
-    console.print("[bold cyan]=================================================================\n[/bold cyan]")
+        print_positions_table(latest_pos)
+
+        if not latest_pos:
+            console.print(f"[dim]{t('no_positions')}[/dim]")
+            Prompt.ask(f"\n{t('press_enter_back')}", default="")
+            break
+
+        # 构造序号与标的代码映射表
+        index_map: Dict[str, Any] = {}
+        symbol_map: Dict[str, Any] = {}
+        for idx, pos in enumerate(latest_pos, 1):
+            sym = str(_safe_get(pos, "symbol", "")).strip().upper()
+            index_map[str(idx)] = pos
+            if sym:
+                symbol_map[sym] = pos
+
+        console.print(f"\n[bold cyan]{t('pos_menu_title')}[/bold cyan]")
+        sell_choice = Prompt.ask(
+            t("pos_menu_prompt"),
+            default=""
+        ).strip().upper()
+
+        if not sell_choice or sell_choice in ["Q", "QUIT", "EXIT", "BACK", "MENU"]:
+            break
+
+        matched_pos = index_map.get(sell_choice) or symbol_map.get(sell_choice)
+        if not matched_pos:
+            console.print(f"[bold red]{t('pos_not_found', choice=sell_choice)}[/bold red]")
+            Prompt.ask(f"\n{t('press_enter_continue')}", default="")
+            continue
+
+        target_symbol = str(_safe_get(matched_pos, "symbol", sell_choice)).upper()
+        total_qty = _safe_float(_safe_get(matched_pos, "qty", 0.0))
+        curr_price = _safe_float(_safe_get(matched_pos, "current_price", 0.0))
+        avg_entry_price = _safe_float(_safe_get(matched_pos, "avg_entry_price", 0.0))
+        unrealized_pl = _safe_float(_safe_get(matched_pos, "unrealized_pl", 0.0))
+
+        if total_qty <= 0:
+            console.print(f"[bold red]{t('pos_qty_zero', symbol=target_symbol)}[/bold red]")
+            Prompt.ask(f"\n{t('press_enter_continue')}", default="")
+            continue
+
+        qty_str = f"{int(total_qty)}" if total_qty.is_integer() else f"{total_qty:g}"
+        pl_color = "green" if unrealized_pl >= 0 else "red"
+        pl_sign = "+$" if unrealized_pl >= 0 else "-$"
+        pl_formatted = f"[{pl_color}]{pl_sign}{abs(unrealized_pl):,.2f}[/{pl_color}]"
+
+        console.print(
+            f"\n[bold green]{t('pos_selected_info', symbol=target_symbol, qty=qty_str, avg=avg_entry_price, curr=curr_price, pl=pl_formatted)}[/bold green]"
+        )
+
+        qty_input = Prompt.ask(
+            t("sell_qty_prompt", qty=qty_str),
+            default="ALL"
+        ).strip().upper()
+
+        if qty_input in ["C", "CANCEL", "BACK", "Q"]:
+            console.print(f"[yellow]{t('sell_canceled')}[/yellow]")
+            continue
+
+        if qty_input in ["ALL", "A", ""]:
+            sell_qty = total_qty
+        else:
+            try:
+                sell_qty = float(qty_input)
+                if sell_qty <= 0:
+                    console.print("[bold red]❌ 卖出数量必须大于 0 / Quantity must be > 0![/bold red]")
+                    Prompt.ask(f"\n{t('press_enter_continue')}", default="")
+                    continue
+                if sell_qty > total_qty:
+                    console.print(f"[bold red]❌ 卖出数量 ({sell_qty:g}) 超过当前持仓数量 ({qty_str})！[/bold red]")
+                    Prompt.ask(f"\n{t('press_enter_continue')}", default="")
+                    continue
+            except ValueError:
+                console.print("[bold red]❌ 输入的数量格式有误，请输入纯数字或 'ALL'。[/bold red]")
+                Prompt.ask(f"\n{t('press_enter_continue')}", default="")
+                continue
+
+        sell_qty_display = f"{int(sell_qty)}" if sell_qty.is_integer() else f"{sell_qty:g}"
+
+        # 二次防误触确认
+        if not Confirm.ask(
+            t("sell_confirm_prompt", qty=sell_qty_display, symbol=target_symbol),
+            default=True
+        ):
+            console.print(f"[yellow]{t('sell_canceled')}[/yellow]")
+            continue
+
+        console.print(f"[bold cyan][*] 正在下发卖出指令 / Submitting order: {target_symbol} x {sell_qty_display}...[/bold cyan]")
+        try:
+            if sell_qty >= total_qty:
+                order_res = exec_client.close_position(symbol=target_symbol)
+            else:
+                order_res = exec_client.close_position(
+                    symbol=target_symbol,
+                    qty=int(sell_qty) if sell_qty.is_integer() else sell_qty
+                )
+
+            console.print(f"[bold green]{t('sell_success', symbol=target_symbol, qty=sell_qty_display)}[/bold green]")
+
+            # 记录不可变审计日志
+            try:
+                os.makedirs("logs", exist_ok=True)
+                with open("logs/audit_trail.jsonl", "a", encoding="utf-8") as f:
+                    log_entry = {
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "event": "MANUAL_SELL_ORDER",
+                        "symbol": target_symbol,
+                        "qty": sell_qty,
+                        "price": curr_price,
+                        "order_response": str(order_res) if order_res else "SUBMITTED"
+                    }
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+
+            Prompt.ask(f"\n{t('press_enter_refresh')}", default="")
+        except Exception as e:
+            err_str = str(e)
+            if "insufficient qty" in err_str.lower() or "held_for_orders" in err_str.lower() or "40310000" in err_str:
+                console.print(f"\n[bold yellow]{t('sell_locked_warning', symbol=target_symbol)}[/bold yellow]")
+                if Confirm.ask(t("sell_auto_unlock_confirm", symbol=target_symbol), default=True):
+                    try:
+                        console.print(f"[bold cyan]{t('sell_canceling_orders', symbol=target_symbol)}[/bold cyan]")
+                        canceled = exec_client.cancel_symbol_orders(symbol=target_symbol)
+                        console.print(f"[bold green]{t('sell_canceled_and_reselling', count=canceled)}[/bold green]")
+                        time.sleep(1.0)
+
+                        console.print(f"[bold cyan][*] 重新下发平仓指令: {target_symbol} x {sell_qty_display}...[/bold cyan]")
+                        if sell_qty >= total_qty:
+                            order_res = exec_client.close_position(symbol=target_symbol)
+                        else:
+                            order_res = exec_client.close_position(
+                                symbol=target_symbol,
+                                qty=int(sell_qty) if sell_qty.is_integer() else sell_qty
+                            )
+                        console.print(f"[bold green]{t('sell_success', symbol=target_symbol, qty=sell_qty_display)}[/bold green]")
+                        try:
+                            os.makedirs("logs", exist_ok=True)
+                            with open("logs/audit_trail.jsonl", "a", encoding="utf-8") as f:
+                                log_entry = {
+                                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    "event": "MANUAL_SELL_ORDER_AFTER_AUTO_CANCEL",
+                                    "symbol": target_symbol,
+                                    "qty": sell_qty,
+                                    "price": curr_price,
+                                    "order_response": str(order_res) if order_res else "SUBMITTED"
+                                }
+                                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                        Prompt.ask(f"\n{t('press_enter_refresh')}", default="")
+                        continue
+                    except Exception as retry_e:
+                        console.print(f"[bold red]❌ 自动撤单并重试卖出失败: {retry_e}[/bold red]")
+            else:
+                console.print(f"[bold red]{t('sell_failed', error=e)}[/bold red]")
+            Prompt.ask(f"\n{t('press_enter_continue')}", default="")
+
+
+def handle_orders_menu(exec_client: AlpacaExecutionClient, console: Console) -> None:
+    """
+    未成交挂单看板及交互式撤单管理菜单 / Order Cancellation Management Menu
+    """
+    while True:
+        console.print(f"\n[bold cyan]{t('connecting_alpaca')}[/bold cyan]")
+        try:
+            latest_ord = exec_client.get_open_orders()
+        except Exception as e:
+            console.print(f"[bold red]获取订单列表失败: {e}[/bold red]")
+            Prompt.ask(f"\n{t('press_enter_back')}", default="")
+            break
+
+        print_open_orders_table(latest_ord)
+
+        if not latest_ord:
+            console.print(f"[dim]{t('no_open_orders')}[/dim]")
+            Prompt.ask(f"\n{t('press_enter_back')}", default="")
+            break
+
+        # 映射序号与订单
+        index_map: Dict[str, Any] = {}
+        symbol_orders_map: Dict[str, List[Any]] = {}
+        for idx, order in enumerate(latest_ord, 1):
+            index_map[str(idx)] = order
+            sym = str(_safe_get(order, "symbol", "")).strip().upper()
+            if sym:
+                symbol_orders_map.setdefault(sym, []).append(order)
+
+        console.print(f"\n[bold cyan]{t('order_menu_title')}[/bold cyan]")
+        cancel_choice = Prompt.ask(
+            t("order_menu_prompt"),
+            default=""
+        ).strip().upper()
+
+        if not cancel_choice or cancel_choice in ["Q", "QUIT", "EXIT", "BACK", "MENU"]:
+            break
+
+        if cancel_choice == "ALL":
+            if Confirm.ask(t("cancel_all_confirm"), default=False):
+                try:
+                    exec_client.cancel_all_orders()
+                    console.print(f"[bold green]{t('cancel_all_success')}[/bold green]")
+                    time.sleep(1.0)
+                except Exception as e:
+                    console.print(f"[bold red]❌ 撤单失败: {e}[/bold red]")
+                Prompt.ask(f"\n{t('press_enter_refresh')}", default="")
+            continue
+
+        if cancel_choice in index_map:
+            chosen_order = index_map[cancel_choice]
+            order_id = str(_safe_get(chosen_order, "id", ""))
+            order_sym = str(_safe_get(chosen_order, "symbol", ""))
+            order_type = str(_safe_get(chosen_order, "order_type", ""))
+            if Confirm.ask(t("cancel_single_confirm", idx=cancel_choice, symbol=order_sym, type=order_type, id=order_id[:8]), default=True):
+                try:
+                    exec_client.cancel_order(order_id)
+                    console.print(f"[bold green]{t('cancel_single_success', idx=cancel_choice, symbol=order_sym)}[/bold green]")
+                    time.sleep(0.5)
+                except Exception as e:
+                    console.print(f"[bold red]❌ 撤单失败: {e}[/bold red]")
+                Prompt.ask(f"\n{t('press_enter_refresh')}", default="")
+            continue
+
+        if cancel_choice in symbol_orders_map:
+            sym_orders = symbol_orders_map[cancel_choice]
+            if Confirm.ask(t("cancel_symbol_confirm", symbol=cancel_choice, count=len(sym_orders)), default=True):
+                try:
+                    canceled = exec_client.cancel_symbol_orders(symbol=cancel_choice)
+                    console.print(f"[bold green]{t('cancel_symbol_success', symbol=cancel_choice, count=canceled)}[/bold green]")
+                    time.sleep(0.5)
+                except Exception as e:
+                    console.print(f"[bold red]❌ 撤单失败: {e}[/bold red]")
+                Prompt.ask(f"\n{t('press_enter_refresh')}", default="")
+            continue
+
+        console.print(f"[bold red]{t('order_not_found', choice=cancel_choice)}[/bold red]")
+        Prompt.ask(f"\n{t('press_enter_continue')}", default="")
+
+
+async def main():
+    parser = argparse.ArgumentParser(description="AiAgentForTrading 交互式量化交易系统终端 / Interactive Trading Terminal")
+    parser.add_argument("-p", "--positions", action="store_true", help="直接在命令行显示当前持仓详情并退出 / Show positions and exit")
+    parser.add_argument("-o", "--orders", action="store_true", help="直接在命令行显示当前未成交活动挂单并退出 / Show open orders and exit")
+    parser.add_argument("-s", "--status", action="store_true", help="直接在命令行显示完整账户概览、持仓及挂单并退出 / Show account overview and exit")
+    parser.add_argument("-sc", "--scan", action="store_true", help="直接在命令行执行全市场一键扫盘并输出推荐买入标的后退出 / Run market scan and exit")
+    parser.add_argument("-l", "--lang", choices=["zh", "en", "auto"], default=None, help="设置界面语言 / Set UI language (zh=中文, en=English)")
+    args = parser.parse_args()
 
     # 1. 加载配置与初始化 Client 和 Engine
     config = load_yaml_config("config/settings.yaml")
+
+    # 配置语言优先级: CLI 参数 > settings.yaml > 默认 (zh)
+    if args.lang and args.lang in [LANG_ZH, LANG_EN]:
+        set_current_lang(args.lang)
+    elif config.get("system", {}).get("language") in [LANG_ZH, LANG_EN]:
+        set_current_lang(config.get("system", {}).get("language"))
+
+    console.print("\n[bold cyan]=================================================================[/bold cyan]")
+    console.print(f"[bold cyan]   {t('app_title')}   [/bold cyan]")
+    console.print("[bold cyan]=================================================================\n[/bold cyan]")
+
     alpaca_cfg = config.get("alpaca", {})
     featherless_cfg = config.get("featherless", {})
 
@@ -213,7 +477,7 @@ async def main():
 
     # 快捷 CLI 参数单次执行分支: 一键扫盘
     if args.scan:
-        console.print("[bold blue][*] 正在同步宏观指标、标的池实时快照与持仓挂单，启动五大智能体真实辩论扫盘...[/bold blue]")
+        console.print(f"[bold blue]{t('scanning_market', count=len(universe_tickers), regime='AUTO')}[/bold blue]")
         macro_metrics = fetch_live_macro_metrics(fred_api_key=fred_key)
         vix, hy_spread = macro_metrics["vix"], macro_metrics["hy_spread"]
         current_regime = regime_engine.determine_regime(vix, hy_spread)
@@ -244,19 +508,19 @@ async def main():
 
     # 快捷 CLI 参数单次执行分支: 持仓详情
     if args.positions:
-        console.print("[bold blue][*] 正在从 Alpaca 获取最新持仓详情...[/bold blue]")
+        console.print(f"[bold blue]{t('connecting_alpaca')}[/bold blue]")
         positions = exec_client.get_positions()
         print_positions_table(positions)
         return
 
     if args.orders:
-        console.print("[bold blue][*] 正在从 Alpaca 获取最新未成交订单...[/bold blue]")
+        console.print(f"[bold blue]{t('connecting_alpaca')}[/bold blue]")
         orders = exec_client.get_open_orders()
         print_open_orders_table(orders)
         return
 
     if args.status:
-        console.print("[bold blue][*] 正在同步 Alpaca 账户全景状态...[/bold blue]")
+        console.print(f"[bold blue]{t('connecting_alpaca')}[/bold blue]")
         try:
             account_summary = exec_client.get_account_summary()
             total_equity = account_summary["total_equity"]
@@ -276,15 +540,15 @@ async def main():
         sgov_pos = exec_client.get_treasury_sweep_position("SGOV")
         sgov_val = sgov_pos["market_value"] if sgov_pos else 0.0
 
-        status_table = Table(title="[bold cyan]账户与宏观状态总览[/bold cyan]", border_style="cyan")
-        status_table.add_column("账户总净值 (Equity)", justify="right", style="green")
-        status_table.add_column("可用购买力 (Buying Power)", justify="right")
-        status_table.add_column("现金余额 (Cash)", justify="right")
-        status_table.add_column("国债理财 (SGOV)", justify="right", style="yellow")
-        status_table.add_column("当日盈亏比例", justify="right")
-        status_table.add_column("VIX 指数", justify="center")
-        status_table.add_column("高收益利差", justify="center")
-        status_table.add_column("宏观模式", justify="center", style="bold magenta")
+        status_table = Table(title=f"[bold cyan]{t('macro_status_title')}[/bold cyan]", border_style="cyan")
+        status_table.add_column(t("col_equity"), justify="right", style="green")
+        status_table.add_column(t("col_buying_power"), justify="right")
+        status_table.add_column(t("col_cash"), justify="right")
+        status_table.add_column(t("col_sgov"), justify="right", style="yellow")
+        status_table.add_column(t("col_day_pnl"), justify="right")
+        status_table.add_column(t("col_vix"), justify="center")
+        status_table.add_column(t("col_hy_spread"), justify="center")
+        status_table.add_column(t("col_regime"), justify="center", style="bold magenta")
         pnl_color = "green" if day_pnl_pct >= 0 else "red"
         status_table.add_row(
             f"${total_equity:,.2f}",
@@ -308,7 +572,7 @@ async def main():
     # 交互式主事件循环
     while True:
         # 2. 从 Alpaca 同步真实账户资产状态、当前持仓与活动挂单
-        console.print("\n[bold blue][*] 正在同步 Alpaca 账户实时数据、持仓状态与活动挂单...[/bold blue]")
+        console.print(f"\n[bold blue]{t('connecting_alpaca')}[/bold blue]")
         try:
             account_summary = exec_client.get_account_summary()
             total_equity = account_summary["total_equity"]
@@ -337,15 +601,15 @@ async def main():
         sgov_val = sgov_pos["market_value"] if sgov_pos else 0.0
 
         # 打印账户与市场宏观状态看板
-        status_table = Table(title="[bold cyan]账户与宏观状态总览[/bold cyan]", border_style="cyan")
-        status_table.add_column("账户总净值 (Equity)", justify="right", style="green")
-        status_table.add_column("可用购买力 (Buying Power)", justify="right")
-        status_table.add_column("现金余额 (Cash)", justify="right")
-        status_table.add_column("国债理财 (SGOV)", justify="right", style="yellow")
-        status_table.add_column("当日盈亏比例", justify="right")
-        status_table.add_column("VIX 指数", justify="center")
-        status_table.add_column("高收益利差", justify="center")
-        status_table.add_column("宏观模式", justify="center", style="bold magenta")
+        status_table = Table(title=f"[bold cyan]{t('macro_status_title')}[/bold cyan]", border_style="cyan")
+        status_table.add_column(t("col_equity"), justify="right", style="green")
+        status_table.add_column(t("col_buying_power"), justify="right")
+        status_table.add_column(t("col_cash"), justify="right")
+        status_table.add_column(t("col_sgov"), justify="right", style="yellow")
+        status_table.add_column(t("col_day_pnl"), justify="right")
+        status_table.add_column(t("col_vix"), justify="center")
+        status_table.add_column(t("col_hy_spread"), justify="center")
+        status_table.add_column(t("col_regime"), justify="center", style="bold magenta")
 
         pnl_color = "green" if day_pnl_pct >= 0 else "red"
         status_table.add_row(
@@ -369,17 +633,17 @@ async def main():
         console.print(render_open_orders_table(current_orders))
 
         # 4. 加载 S&P 500 标的池并拉取实时行情展示
-        console.print(f"\n[bold blue][*] 正在从标的池 (共 {len(universe_tickers)} 支标的) 获取最新市场快照...[/bold blue]")
+        console.print(f"\n[bold blue]{t('fetching_universe', count=len(universe_tickers))}[/bold blue]")
         snapshots = fetch_tickers_snapshots(data_client, universe_tickers)
 
         # 渲染标的池快照行情表格
-        ticker_table = Table(title="[bold blue]标普 500 核心标的行情池[/bold blue]", border_style="blue")
-        ticker_table.add_column("序号", justify="center", style="dim")
-        ticker_table.add_column("代码 (Ticker)", justify="center", style="bold yellow")
-        ticker_table.add_column("最新市价", justify="right", style="cyan")
-        ticker_table.add_column("当日涨跌幅", justify="right")
-        ticker_table.add_column("RSI (14D)", justify="center")
-        ticker_table.add_column("成交量 (Volume)", justify="right")
+        ticker_table = Table(title=f"[bold blue]{t('universe_table_title')}[/bold blue]", border_style="blue")
+        ticker_table.add_column(t("col_u_idx"), justify="center", style="dim")
+        ticker_table.add_column(t("col_u_ticker"), justify="center", style="bold yellow")
+        ticker_table.add_column(t("col_u_price"), justify="right", style="cyan")
+        ticker_table.add_column(t("col_u_chg"), justify="right")
+        ticker_table.add_column(t("col_u_rsi"), justify="center")
+        ticker_table.add_column(t("col_u_vol"), justify="right")
 
         ticker_map = {}
         for idx, sym in enumerate(universe_tickers, 1):
@@ -398,30 +662,39 @@ async def main():
 
         # 5. 用户交互选择交易标的与交易倾向模式
         user_choice = Prompt.ask(
-            "\n请输入要分析交易的 [bold yellow]标的代码[/bold yellow] 或 [bold yellow]序号[/bold yellow] (输入 'S'=一键扫盘, 'P'=查看持仓, 'O'=查看未成交挂单, 'exit'/'q'=退出)",
+            f"\n{t('main_prompt')}",
             default="S"
         ).strip().upper()
 
         if user_choice in ["Q", "QUIT", "EXIT"]:
-            console.print("[bold yellow]已退出交易系统。祝您投资顺利！[/bold yellow]")
+            console.print(f"[bold yellow]{t('exit_success')}[/bold yellow]")
             break
 
+        if user_choice in ["L", "LANG", "LANGUAGE"]:
+            toggle_lang()
+            console.print(f"\n{t('language_switched')}\n")
+            continue
+
+        if user_choice in ["EN", "ENGLISH", "ENG"]:
+            set_current_lang(LANG_EN)
+            console.print(f"\n[bold green]{t('lang_switched_en')}[/bold green]\n")
+            continue
+
+        if user_choice in ["ZH", "CN", "CHINESE", "中文"]:
+            set_current_lang(LANG_ZH)
+            console.print(f"\n[bold green]{t('lang_switched_zh')}[/bold green]\n")
+            continue
+
         if user_choice in ["P", "POS", "POSITION", "POSITIONS"]:
-            console.print("\n[bold cyan][*] 正在即时刷新 Alpaca 持仓详情...[/bold cyan]")
-            latest_pos = exec_client.get_positions()
-            print_positions_table(latest_pos)
-            Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+            handle_positions_menu(exec_client, console)
             continue
 
         if user_choice in ["O", "ORD", "ORDER", "ORDERS"]:
-            console.print("\n[bold cyan][*] 正在即时刷新 Alpaca 未成交活动挂单...[/bold cyan]")
-            latest_ord = exec_client.get_open_orders()
-            print_open_orders_table(latest_ord)
-            Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+            handle_orders_menu(exec_client, console)
             continue
 
         if user_choice in ["S", "SCAN", "SCANNER", "SWEEP"]:
-            console.print(f"\n[bold cyan][*] 正在对全市场 {len(universe_tickers)} 支标的启动五大智能体真实辩论扫盘 (Regime: {current_regime})...[/bold cyan]")
+            console.print(f"\n[bold cyan]{t('scanning_market', count=len(universe_tickers), regime=current_regime)}[/bold cyan]")
             scan_results = await scanner.scan_universe_async(
                 universe_tickers=universe_tickers,
                 snapshots=snapshots,
@@ -442,7 +715,7 @@ async def main():
                     scan_map[item["symbol"].upper()] = item["symbol"]
 
                 quick_choice = Prompt.ask(
-                    "\n请输入推荐标的 [bold yellow]序号[/bold yellow] 或 [bold yellow]代码[/bold yellow] 直接进入决策 (直接按 Enter 返回主菜单)",
+                    f"\n{t('scanner_quick_prompt')}",
                     default=""
                 ).strip().upper()
 
@@ -451,25 +724,25 @@ async def main():
 
                 selected_ticker = scan_map.get(quick_choice, ticker_map.get(quick_choice, quick_choice))
             else:
-                Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+                Prompt.ask(f"\n{t('press_enter_back')}", default="")
                 continue
         else:
             selected_ticker = ticker_map.get(user_choice, user_choice)
 
         if selected_ticker not in universe_tickers:
-            console.print(f"[bold red]错误: 标的 {selected_ticker} 不在允许的白名单标的池内！请重新选择。[/bold red]")
+            console.print(f"[bold red]{t('invalid_ticker', ticker=selected_ticker)}[/bold red]")
             continue
 
         trade_mode = Prompt.ask(
-            "请选择交易倾向 [AUTO=智能混合决策, EQUITY=仅正股, OPTION=仅期权]",
+            t("trade_mode_prompt"),
             choices=["AUTO", "EQUITY", "OPTION"],
             default="AUTO"
         ).upper()
 
         chosen_data = snapshots.get(selected_ticker, {})
         current_price = chosen_data.get("price", 100.0)
-        console.print(f"\n[bold green]>>> 已选中标的: {selected_ticker} (当前市价: ${current_price:.2f}, 倾向: {trade_mode})[/bold green]")
-        console.print("[bold cyan][*] 正在唤起 5 大策略研究智能体并行分析辩论...[/bold cyan]")
+        console.print(f"\n[bold green]{t('selected_ticker_info', ticker=selected_ticker, price=current_price, mode=trade_mode)}[/bold green]")
+        console.print(f"[bold cyan]{t('calling_agents')}[/bold cyan]")
 
         # 6. 构造多维特征并触发多 Agent 辩论共识
         feature_payload = {
@@ -512,8 +785,8 @@ async def main():
         )
 
         if not memo:
-            console.print(f"[yellow]提示: {selected_ticker} 的多 Agent 加权评分未达到 0.70 门槛，未生成交易提案。[/yellow]")
-            Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+            console.print(f"[yellow]{t('hitl_score_threshold_fail', ticker=selected_ticker)}[/yellow]")
+            Prompt.ask(f"\n{t('press_enter_back')}", default="")
             continue
 
         # 7. Critic Agent 独立合规与底线审查
@@ -529,19 +802,19 @@ async def main():
         render_hybrid_memo_panel(memo, critic_passed, violations)
 
         if not critic_passed:
-            console.print(f"[bold red]Critic 独立审查未通过，拒绝推入审批流: {'; '.join(violations)}[/bold red]")
-            Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+            console.print(f"[bold red]{t('hitl_critic_reject', violations='; '.join(violations))}[/bold red]")
+            Prompt.ask(f"\n{t('press_enter_back')}", default="")
             continue
 
         # 9. 人机协同审批流 (HitL Gate)
         action = Prompt.ask(
-            "\n请确认操作 [A=通过下单, R=驳回, E=微调参数, S=跳过/返回主菜单, EXIT=退出系统]",
+            t("hitl_action_prompt"),
             choices=["A", "R", "E", "S", "EXIT"],
             default="A"
         ).upper()
 
         if action == "EXIT":
-            console.print("[bold yellow]已退出交易系统。祝您投资顺利！[/bold yellow]")
+            console.print(f"[bold yellow]{t('exit_success')}[/bold yellow]")
             break
 
         should_submit = False
@@ -555,27 +828,27 @@ async def main():
         elif action == "E":
             try:
                 if memo.asset_type == "OPTION":
-                    contracts_in = Prompt.ask("请输入调整后的期权张数", default=str(memo.suggested_contracts or 1))
+                    contracts_in = Prompt.ask(t("hitl_adjust_contracts"), default=str(memo.suggested_contracts or 1))
                     final_contracts = int(contracts_in)
-                    tp_in = Prompt.ask("请输入调整后的止盈权利金 (TP)", default=str(memo.take_profit_price))
+                    tp_in = Prompt.ask(t("hitl_adjust_option_tp"), default=str(memo.take_profit_price))
                     final_tp = float(tp_in)
-                    sl_in = Prompt.ask("请输入调整后的止损权利金 (SL)", default=str(memo.stop_loss_price))
+                    sl_in = Prompt.ask(t("hitl_adjust_option_sl"), default=str(memo.stop_loss_price))
                     final_sl = float(sl_in)
                 else:
-                    shares_in = Prompt.ask("请输入调整后的正股股数", default=str(memo.suggested_shares or 10))
+                    shares_in = Prompt.ask(t("hitl_adjust_shares"), default=str(memo.suggested_shares or 10))
                     final_shares = int(shares_in)
-                    tp_in = Prompt.ask("请输入调整后的止盈价 (TP)", default=str(memo.take_profit_price))
+                    tp_in = Prompt.ask(t("hitl_adjust_stock_tp"), default=str(memo.take_profit_price))
                     final_tp = float(tp_in)
-                    sl_in = Prompt.ask("请输入调整后的止损价 (SL)", default=str(memo.stop_loss_price))
+                    sl_in = Prompt.ask(t("hitl_adjust_stock_sl"), default=str(memo.stop_loss_price))
                     final_sl = float(sl_in)
                 should_submit = True
             except ValueError:
-                console.print("[bold red]输入参数格式有误，取消本次下单。[/bold red]")
+                console.print(f"[bold red]{t('hitl_param_error')}[/bold red]")
                 should_submit = False
         elif action == "R":
-            console.print("[red]操作员已驳回该提案，已记入审计追踪。[/red]")
+            console.print(f"[red]{t('hitl_rejected_msg')}[/red]")
         else:
-            console.print("[dim]已跳过当前提案。[/dim]")
+            console.print(f"[dim]{t('hitl_skipped_msg')}[/dim]")
 
         # 10. 确定性 Python 硬风控拦截校验与下单
         if should_submit:
@@ -600,9 +873,9 @@ async def main():
                 if cash < order_amount:
                     freed = exec_client.release_cash_from_treasury(order_amount)
                     if freed > 0:
-                        console.print(f"[bold cyan]已从 SGOV 国债理财自动变现释放约 ${freed:,.2f} 现金[/bold cyan]")
+                        console.print(f"[bold cyan]{t('sgov_freed_msg', amount=freed)}[/bold cyan]")
                     else:
-                        console.print(f"[yellow]提示: SGOV 暂无可用持仓变现，正在检查账户总购买力...[/yellow]")
+                        console.print(f"[yellow]{t('sgov_no_pos_msg')}[/yellow]")
 
                 # 购买力前置严格门禁检查 (Pre-flight Buying Power Gate)
                 try:
@@ -613,15 +886,14 @@ async def main():
 
                 if available_bp < order_amount:
                     console.print(
-                        f"[bold red]❌ 购买力不足拦截: 本次下单需 ${order_amount:,.2f}，当前账户可用购买力仅 ${available_bp:,.2f}。\n"
-                        f"【原因提示】若当前处于非美股常规交易时段 (休市中)，SGOV 变现单需等待开盘撮合成交后方能释放购买力。[/bold red]"
+                        f"[bold red]{t('buying_power_error', needed=order_amount, available=available_bp)}[/bold red]"
                     )
-                    Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键返回主菜单", default="")
+                    Prompt.ask(f"\n{t('press_enter_back')}", default="")
                     continue
 
                 if memo.asset_type == "OPTION":
                     console.print(
-                        f"[bold green][√] 硬风控通过！正在向 Alpaca 下发期权限价单: 买入 {final_contracts} 张 {memo.contract_symbol} @ ${memo.premium_per_share:.2f}...[/bold green]"
+                        f"[bold green]{t('risk_passed_option', contracts=final_contracts, symbol=memo.contract_symbol, premium=memo.premium_per_share)}[/bold green]"
                     )
                     try:
                         order_id = exec_client.place_option_limit_order(
@@ -629,11 +901,11 @@ async def main():
                             contracts=final_contracts or 1,
                             limit_price=memo.premium_per_share or 1.0,
                         )
-                        console.print(f"[bold green][成功] 期权订单已成功提交至 Alpaca Paper API！订单编号: {order_id}[/bold green]")
+                        console.print(f"[bold green]{t('order_submitted_success_option', order_id=order_id)}[/bold green]")
                     except Exception as e:
-                        console.print(f"[yellow]Alpaca 期权订单下发提示: {e} (已记录订单就绪)[/yellow]")
+                        console.print(f"[yellow]Alpaca: {e}[/yellow]")
                 else:
-                    console.print(f"[bold green][√] 确定性硬风控校验通过！正在向 Alpaca 下发正股 Bracket OCO 订单...[/bold green]")
+                    console.print(f"[bold green]{t('risk_passed_stock')}[/bold green]")
                     try:
                         order_id = exec_client.place_bracket_oco_order(
                             ticker=memo.underlying_ticker,
@@ -641,9 +913,9 @@ async def main():
                             take_profit_price=final_tp,
                             stop_loss_price=final_sl
                         )
-                        console.print(f"[bold green][成功] 正股订单已成功提交至 Alpaca Paper API！订单编号: {order_id}[/bold green]")
+                        console.print(f"[bold green]{t('order_submitted_success_stock', order_id=order_id)}[/bold green]")
                     except Exception as e:
-                        console.print(f"[yellow]Alpaca 实盘下发提示: {e} (已记录订单就绪)[/yellow]")
+                        console.print(f"[yellow]Alpaca: {e}[/yellow]")
 
                 # 记录不可变审计日志
                 os.makedirs("logs", exist_ok=True)
@@ -668,15 +940,14 @@ async def main():
                     sweep_result = exec_client.sweep_idle_cash_to_treasury()
                     if sweep_result:
                         console.print(
-                            f"[bold yellow]💰 [闲置资金清扫] 剩余现金已自动买入 {sweep_result['symbol']} "
-                            f"{sweep_result['shares']} 股 (年化收益率 ~4.5%)[/bold yellow]"
+                            f"[bold yellow]{t('idle_cash_swept_msg', symbol=sweep_result['symbol'], shares=sweep_result['shares'])}[/bold yellow]"
                         )
                 except Exception:
                     pass
             else:
-                console.print(f"[bold red][!] 硬风控拦截，订单被拒绝: {'; '.join(rejections)}[/bold red]")
+                console.print(f"[bold red]{t('risk_rejected', violations='; '.join(rejections))}[/bold red]")
 
-        Prompt.ask("\n按 [bold cyan]Enter[/bold cyan] 键继续下一轮交易决策", default="")
+        Prompt.ask(f"\n{t('next_round_prompt')}", default="")
 
 
 if __name__ == "__main__":

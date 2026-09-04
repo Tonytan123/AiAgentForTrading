@@ -13,7 +13,7 @@ from cli.terminal_ui import (
 
 def test_render_positions_table_empty():
     """测试当持仓为空时的表格渲染"""
-    table = render_positions_table([])
+    table = render_positions_table([], lang="zh")
     assert isinstance(table, Table)
     symbols = table.columns[1]._cells
     assert len(symbols) == 1
@@ -64,7 +64,7 @@ def test_render_positions_table_with_mock_data():
         },
     ]
 
-    table = render_positions_table(mock_positions)
+    table = render_positions_table(mock_positions, lang="zh")
     assert isinstance(table, Table)
     assert len(table.columns) == 11
     symbols = table.columns[1]._cells
@@ -98,7 +98,7 @@ def test_render_positions_table_with_objects():
 
 def test_render_open_orders_table_empty():
     """测试未成交订单为空时的表格渲染"""
-    table = render_open_orders_table([])
+    table = render_open_orders_table([], lang="zh")
     assert isinstance(table, Table)
     symbols = table.columns[2]._cells
     assert len(symbols) == 1
@@ -176,3 +176,104 @@ def test_print_dashboard_functions():
     print_positions_table([])
     print_open_orders_table([])
     print_portfolio_dashboard([], [])
+
+
+def test_handle_positions_menu_empty(monkeypatch):
+    """测试当持仓为空时 handle_positions_menu 的执行流"""
+    from main import handle_positions_menu
+    from rich.console import Console
+
+    mock_exec = MagicMock()
+    mock_exec.get_positions.return_value = []
+    console = Console(record=True)
+
+    # 模拟用户按 Enter 返回
+    monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *args, **kwargs: "")
+    handle_positions_menu(mock_exec, console)
+    mock_exec.close_position.assert_not_called()
+
+
+def test_handle_positions_menu_sell_by_index_all(monkeypatch):
+    """测试按持仓序号 (1) 选择标的并全额卖出"""
+    from main import handle_positions_menu
+    from rich.console import Console
+
+    mock_pos = {
+        "symbol": "AAPL",
+        "asset_class": "us_equity",
+        "side": "long",
+        "qty": 50,
+        "avg_entry_price": 220.00,
+        "current_price": 230.00,
+        "market_value": 11500.00,
+        "unrealized_pl": 500.00,
+    }
+    mock_exec = MagicMock()
+    # 第一次返回有持仓，卖出后返回空列表结束循环
+    mock_exec.get_positions.side_effect = [[mock_pos], []]
+    mock_exec.close_position.return_value = {"id": "sell-order-1", "status": "submitted"}
+    console = Console(record=True)
+
+    # 模拟用户输入: 1 (选序号1) -> ALL (全部卖出) -> Enter (确认刷新) -> Enter (无持仓后按Enter退出)
+    inputs = iter(["1", "ALL", "", ""])
+    monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *args, **kwargs: next(inputs))
+    monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *args, **kwargs: True)
+
+    handle_positions_menu(mock_exec, console)
+    mock_exec.close_position.assert_called_once_with(symbol="AAPL")
+
+
+def test_handle_positions_menu_sell_by_symbol_partial(monkeypatch):
+    """测试按标的代码 (NVDA) 选择标的并部分卖出 (20股)"""
+    from main import handle_positions_menu
+    from rich.console import Console
+
+    mock_pos = {
+        "symbol": "NVDA",
+        "asset_class": "us_equity",
+        "side": "long",
+        "qty": 100,
+        "avg_entry_price": 120.00,
+        "current_price": 128.00,
+        "market_value": 12800.00,
+        "unrealized_pl": 800.00,
+    }
+    mock_exec = MagicMock()
+    mock_exec.get_positions.side_effect = [[mock_pos], []]
+    mock_exec.close_position.return_value = {"id": "sell-order-2", "status": "submitted"}
+    console = Console(record=True)
+
+    # 模拟用户输入: NVDA -> 20 -> Enter (确认刷新) -> Enter (无持仓后退出)
+    inputs = iter(["NVDA", "20", "", ""])
+    monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *args, **kwargs: next(inputs))
+    monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *args, **kwargs: True)
+
+    handle_positions_menu(mock_exec, console)
+    mock_exec.close_position.assert_called_once_with(symbol="NVDA", qty=20)
+
+
+def test_handle_positions_menu_cancel(monkeypatch):
+    """测试操作员在确认环节取消卖出"""
+    from main import handle_positions_menu
+    from rich.console import Console
+
+    mock_pos = {
+        "symbol": "MSFT",
+        "asset_class": "us_equity",
+        "side": "long",
+        "qty": 30,
+        "avg_entry_price": 400.00,
+        "current_price": 420.00,
+    }
+    mock_exec = MagicMock()
+    mock_exec.get_positions.return_value = [mock_pos]
+    console = Console(record=True)
+
+    # 模拟用户输入: MSFT -> 10 -> 用户在 Confirm 选 False -> 下一轮按 Enter 退出
+    prompt_inputs = iter(["MSFT", "10", ""])
+    monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *args, **kwargs: next(prompt_inputs))
+    monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *args, **kwargs: False)
+
+    handle_positions_menu(mock_exec, console)
+    mock_exec.close_position.assert_not_called()
+

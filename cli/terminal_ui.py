@@ -12,6 +12,7 @@ from rich.markup import escape
 from rich import box
 
 import sys
+from cli.i18n import t, get_current_lang
 
 # Ensure UTF-8 output on Windows if possible
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
@@ -53,13 +54,13 @@ def _clean_enum_str(val: Any, default: str = "") -> str:
     return s.upper()
 
 
-def render_positions_table(positions: Optional[List[Any]] = None) -> Table:
+def render_positions_table(positions: Optional[List[Any]] = None, lang: Optional[str] = None) -> Table:
     """
     构造当前实盘/模拟持仓详情表格 (Rich Table)
     支持正股 (US_EQUITY)、期权 (US_OPTION) 及货币/国债 ETF (SGOV 等)
     """
     table = Table(
-        title="[bold cyan]【当前实盘 / 模拟持仓详情 (Open Positions)】[/bold cyan]",
+        title=f"[bold cyan]{t('pos_table_title', lang=lang)}[/bold cyan]",
         border_style="cyan",
         header_style="bold cyan",
         show_footer=True,
@@ -68,20 +69,20 @@ def render_positions_table(positions: Optional[List[Any]] = None) -> Table:
         padding=(0, 1),
     )
 
-    table.add_column("#", justify="center", style="dim", footer="汇总", min_width=4, no_wrap=True)
-    table.add_column("标的", justify="center", style="bold yellow", footer=f"{len(positions or [])}笔", min_width=6, no_wrap=True)
-    table.add_column("类别", justify="center", min_width=6, no_wrap=True)
-    table.add_column("多空", justify="center", min_width=4, no_wrap=True)
-    table.add_column("持仓股数", justify="right", style="bold", min_width=8, no_wrap=True)
-    table.add_column("成本均价", justify="right", min_width=10, no_wrap=True)
-    table.add_column("当前市价", justify="right", style="bold", min_width=10, no_wrap=True)
-    table.add_column("持仓市值", justify="right", style="cyan", min_width=12, no_wrap=True)
-    table.add_column("当日涨跌", justify="right", min_width=9, no_wrap=True)
-    table.add_column("浮动盈亏", justify="right", min_width=11, no_wrap=True)
-    table.add_column("盈亏比例", justify="right", min_width=9, no_wrap=True)
+    table.add_column(t("col_idx", lang=lang), justify="center", style="dim", footer=t("pos_summary", lang=lang), min_width=4, no_wrap=True)
+    table.add_column(t("col_symbol", lang=lang), justify="center", style="bold yellow", footer=t("pos_count", lang=lang, count=len(positions or [])), min_width=6, no_wrap=True)
+    table.add_column(t("col_asset_class", lang=lang), justify="center", min_width=6, no_wrap=True)
+    table.add_column(t("col_side", lang=lang), justify="center", min_width=4, no_wrap=True)
+    table.add_column(t("col_shares", lang=lang), justify="right", style="bold", min_width=8, no_wrap=True)
+    table.add_column(t("col_avg_price", lang=lang), justify="right", min_width=10, no_wrap=True)
+    table.add_column(t("col_curr_price", lang=lang), justify="right", style="bold", min_width=10, no_wrap=True)
+    table.add_column(t("col_mkt_val", lang=lang), justify="right", style="cyan", min_width=12, no_wrap=True)
+    table.add_column(t("col_today_chg", lang=lang), justify="right", min_width=9, no_wrap=True)
+    table.add_column(t("col_unrealized_pl", lang=lang), justify="right", min_width=11, no_wrap=True)
+    table.add_column(t("col_unrealized_plpc", lang=lang), justify="right", min_width=9, no_wrap=True)
 
     if not positions:
-        table.add_row("-", "[dim]暂无持仓[/dim]", "-", "-", "-", "-", "-", "$0.00", "-", "$0.00", "0.00%")
+        table.add_row("-", f"[dim]{t('no_positions', lang=lang)}[/dim]", "-", "-", "-", "-", "-", "$0.00", "-", "$0.00", "0.00%")
         return table
 
     total_market_value = 0.0
@@ -92,17 +93,17 @@ def render_positions_table(positions: Optional[List[Any]] = None) -> Table:
         symbol = str(_safe_get(pos, "symbol", "UNKNOWN"))
         asset_class_raw = _clean_enum_str(_safe_get(pos, "asset_class", "us_equity")).lower()
         if "option" in asset_class_raw or len(symbol) > 10:
-            asset_type_str = "[magenta]期权[/magenta]"
+            asset_type_str = f"[magenta]{t('asset_option', lang=lang)}[/magenta]"
         elif symbol in ["SGOV", "BIL", "SHV", "USFR"]:
-            asset_type_str = "[yellow]国债ETF[/yellow]"
+            asset_type_str = f"[yellow]{t('asset_treasury', lang=lang)}[/yellow]"
         else:
-            asset_type_str = "[blue]正股[/blue]"
+            asset_type_str = f"[blue]{t('asset_equity', lang=lang)}[/blue]"
 
         side_raw = _clean_enum_str(_safe_get(pos, "side", "long"))
         if side_raw in ["LONG", "BUY"]:
-            side_str = "[green]多[/green]"
+            side_str = f"[green]{t('side_long', lang=lang)}[/green]"
         else:
-            side_str = "[red]空[/red]"
+            side_str = f"[red]{t('side_short', lang=lang)}[/red]"
 
         qty = _safe_float(_safe_get(pos, "qty", 0))
         qty_str = f"{qty:,.0f}" if qty.is_integer() else f"{qty:,.2f}"
@@ -162,13 +163,13 @@ def render_positions_table(positions: Optional[List[Any]] = None) -> Table:
     return table
 
 
-def render_open_orders_table(orders: Optional[List[Any]] = None) -> Table:
+def render_open_orders_table(orders: Optional[List[Any]] = None, lang: Optional[str] = None) -> Table:
     """
     构造当前未成交活动订单表格 (Rich Table)
     包含市价单、限价单、止盈止损单及 Bracket OCO 挂单等
     """
     table = Table(
-        title="[bold magenta]【当前未成交活动订单 (Open Orders)】[/bold magenta]",
+        title=f"[bold magenta]{t('orders_table_title', lang=lang)}[/bold magenta]",
         border_style="magenta",
         header_style="bold magenta",
         show_footer=True,
@@ -177,20 +178,20 @@ def render_open_orders_table(orders: Optional[List[Any]] = None) -> Table:
         padding=(0, 1),
     )
 
-    table.add_column("#", justify="center", style="dim", footer="汇总", min_width=4, no_wrap=True)
-    table.add_column("订单ID", justify="center", style="dim", footer=f"{len(orders or [])}笔", min_width=8, no_wrap=True)
-    table.add_column("标的", justify="center", style="bold yellow", min_width=6, no_wrap=True)
-    table.add_column("买卖", justify="center", min_width=4, no_wrap=True)
-    table.add_column("类型", justify="center", min_width=6, no_wrap=True)
-    table.add_column("成交/委托", justify="right", style="bold", min_width=10, no_wrap=True)
-    table.add_column("价格 / 触发条件", justify="left", style="cyan", min_width=20, no_wrap=True)
-    table.add_column("结构", justify="center", min_width=6, no_wrap=True)
-    table.add_column("状态", justify="center", style="bold", min_width=6, no_wrap=True)
-    table.add_column("有效期", justify="center", style="dim", min_width=6, no_wrap=True)
-    table.add_column("提交时间", justify="center", style="dim", min_width=14, no_wrap=True)
+    table.add_column(t("col_idx", lang=lang), justify="center", style="dim", footer=t("pos_summary", lang=lang), min_width=4, no_wrap=True)
+    table.add_column(t("col_order_id", lang=lang), justify="center", style="dim", footer=t("pos_count", lang=lang, count=len(orders or [])), min_width=8, no_wrap=True)
+    table.add_column(t("col_symbol", lang=lang), justify="center", style="bold yellow", min_width=6, no_wrap=True)
+    table.add_column(t("col_order_side", lang=lang), justify="center", min_width=4, no_wrap=True)
+    table.add_column(t("col_order_type", lang=lang), justify="center", min_width=6, no_wrap=True)
+    table.add_column(t("col_filled_qty", lang=lang), justify="right", style="bold", min_width=10, no_wrap=True)
+    table.add_column(t("col_price_trigger", lang=lang), justify="left", style="cyan", min_width=20, no_wrap=True)
+    table.add_column(t("col_structure", lang=lang), justify="center", min_width=6, no_wrap=True)
+    table.add_column(t("col_status", lang=lang), justify="center", style="bold", min_width=6, no_wrap=True)
+    table.add_column(t("col_tif", lang=lang), justify="center", style="dim", min_width=6, no_wrap=True)
+    table.add_column(t("col_submitted", lang=lang), justify="center", style="dim", min_width=14, no_wrap=True)
 
     if not orders:
-        table.add_row("-", "-", "[dim]暂无未成交订单 (No Open Orders)[/dim]", "-", "-", "-", "-", "-", "-", "-", "-")
+        table.add_row("-", "-", f"[dim]{t('no_open_orders', lang=lang)}[/dim]", "-", "-", "-", "-", "-", "-", "-", "-")
         return table
 
     for idx, ord_item in enumerate(orders, 1):
@@ -201,9 +202,9 @@ def render_open_orders_table(orders: Optional[List[Any]] = None) -> Table:
 
         side_raw = _clean_enum_str(_safe_get(ord_item, "side", "buy"))
         if "BUY" in side_raw:
-            side_str = "[bold green]买入[/bold green]"
+            side_str = f"[bold green]{t('order_buy', lang=lang)}[/bold green]"
         else:
-            side_str = "[bold red]卖出[/bold red]"
+            side_str = f"[bold red]{t('order_sell', lang=lang)}[/bold red]"
 
         order_type = _clean_enum_str(_safe_get(ord_item, "order_type", _safe_get(ord_item, "type", "LIMIT")))
 
@@ -219,10 +220,10 @@ def render_open_orders_table(orders: Optional[List[Any]] = None) -> Table:
         stop_price = _safe_get(ord_item, "stop_price")
         price_parts = []
         if limit_price is not None:
-            price_parts.append(f"限: ${_safe_float(limit_price):.2f}")
+            price_parts.append(f"{t('price_limit_prefix', lang=lang)}{_safe_float(limit_price):.2f}")
         if stop_price is not None:
-            price_parts.append(f"止: ${_safe_float(stop_price):.2f}")
-        price_display = " / ".join(price_parts) if price_parts else "市价 (MKT)"
+            price_parts.append(f"{t('price_stop_prefix', lang=lang)}{_safe_float(stop_price):.2f}")
+        price_display = " / ".join(price_parts) if price_parts else t("price_market", lang=lang)
 
         order_class = _clean_enum_str(_safe_get(ord_item, "order_class", "simple"))
         status = _clean_enum_str(_safe_get(ord_item, "status", "open"))
@@ -264,36 +265,38 @@ def render_open_orders_table(orders: Optional[List[Any]] = None) -> Table:
     return table
 
 
-def print_positions_table(positions: Optional[List[Any]] = None) -> None:
+def print_positions_table(positions: Optional[List[Any]] = None, lang: Optional[str] = None) -> None:
     """直接在控制台渲染持仓详情表格"""
-    console.print(render_positions_table(positions))
+    console.print(render_positions_table(positions, lang=lang))
 
 
-def print_open_orders_table(orders: Optional[List[Any]] = None) -> None:
+def print_open_orders_table(orders: Optional[List[Any]] = None, lang: Optional[str] = None) -> None:
     """直接在控制台渲染未成交订单表格"""
-    console.print(render_open_orders_table(orders))
+    console.print(render_open_orders_table(orders, lang=lang))
 
 
 def print_portfolio_dashboard(
     positions: Optional[List[Any]] = None,
-    orders: Optional[List[Any]] = None
+    orders: Optional[List[Any]] = None,
+    lang: Optional[str] = None
 ) -> None:
     """组合渲染持仓与未成交活动订单看板"""
-    console.print(render_positions_table(positions))
+    console.print(render_positions_table(positions, lang=lang))
     console.print("\n")
-    console.print(render_open_orders_table(orders))
+    console.print(render_open_orders_table(orders, lang=lang))
 
 
 def render_scanner_results_table(
     scan_results: List[Dict[str, Any]],
-    current_regime: str = "Bull_Trend"
+    current_regime: str = "Bull_Trend",
+    lang: Optional[str] = None
 ) -> Table:
     """
     构造一键扫盘结果推荐表格 (Rich Table)
     按综合共识评分降序展示精选出的优质买入标的
     """
     table = Table(
-        title=f"[bold green]🎯 【全市场一键扫盘 · 五大智能体共识买入推荐 (Regime: {current_regime} | 准入门槛: score ≥ 0.70)】[/bold green]",
+        title=f"[bold green]{t('scanner_table_title', lang=lang, regime=current_regime)}[/bold green]",
         border_style="green",
         header_style="bold green",
         show_footer=True,
@@ -302,20 +305,20 @@ def render_scanner_results_table(
         padding=(0, 1),
     )
 
-    table.add_column("#", justify="center", style="dim", footer="总计", min_width=4, no_wrap=True)
-    table.add_column("代码", justify="center", style="bold yellow", footer=f"{len(scan_results)}支", min_width=6, no_wrap=True)
-    table.add_column("当前状态", justify="center", min_width=10, no_wrap=True)
-    table.add_column("板块", justify="center", style="dim", min_width=12, no_wrap=True)
-    table.add_column("推荐资产", justify="center", min_width=10, no_wrap=True)
-    table.add_column("5-Agent共识", justify="center", style="bold", min_width=10, no_wrap=True)
-    table.add_column("当前市价", justify="right", style="cyan", min_width=10, no_wrap=True)
-    table.add_column("目标止盈 (TP)", justify="right", style="green", min_width=12, no_wrap=True)
-    table.add_column("风控止损 (SL)", justify="right", style="red", min_width=12, no_wrap=True)
-    table.add_column("盈亏比", justify="center", min_width=7, no_wrap=True)
-    table.add_column("核心触发理由与形态", justify="left", min_width=24)
+    table.add_column(t("col_sc_idx", lang=lang), justify="center", style="dim", footer=t("pos_summary", lang=lang), min_width=4, no_wrap=True)
+    table.add_column(t("col_sc_sym", lang=lang), justify="center", style="bold yellow", footer=t("pos_count", lang=lang, count=len(scan_results)), min_width=6, no_wrap=True)
+    table.add_column(t("col_sc_status", lang=lang), justify="center", min_width=10, no_wrap=True)
+    table.add_column(t("col_sc_sector", lang=lang), justify="center", style="dim", min_width=12, no_wrap=True)
+    table.add_column(t("col_sc_asset", lang=lang), justify="center", min_width=10, no_wrap=True)
+    table.add_column(t("col_sc_score", lang=lang), justify="center", style="bold", min_width=10, no_wrap=True)
+    table.add_column(t("col_sc_price", lang=lang), justify="right", style="cyan", min_width=10, no_wrap=True)
+    table.add_column(t("col_sc_tp", lang=lang), justify="right", style="green", min_width=12, no_wrap=True)
+    table.add_column(t("col_sc_sl", lang=lang), justify="right", style="red", min_width=12, no_wrap=True)
+    table.add_column(t("col_sc_rr", lang=lang), justify="center", min_width=7, no_wrap=True)
+    table.add_column(t("col_sc_rationale", lang=lang), justify="left", min_width=24)
 
     if not scan_results:
-        table.add_row("-", "-", "-", "-", "-", "[dim]当前宏观环境下暂未扫描到达到 0.70 门槛的标的[/dim]", "-", "-", "-", "-", "-")
+        table.add_row("-", "-", "-", "-", "-", f"[dim]{t('sc_no_results', lang=lang)}[/dim]", "-", "-", "-", "-", "-")
         return table
 
     for idx, item in enumerate(scan_results, 1):
@@ -325,7 +328,6 @@ def render_scanner_results_table(
         price = float(item.get("price", 0.0))
         status_tag = item.get("status_tag", "NEW")
         asset_mode = item.get("recommended_asset", "EQUITY")
-        asset_disp = item.get("asset_display", "正股")
         tp_price = float(item.get("take_profit_price", price * 1.08))
         sl_price = float(item.get("stop_loss_price", price * 0.96))
         rr = float(item.get("risk_reward_ratio", 2.0))
@@ -333,19 +335,19 @@ def render_scanner_results_table(
 
         # 状态颜色高亮区分 (已持仓 / 挂单中 / 全新机会)
         if status_tag == "HELD_ORDER":
-            status_str = "[bold magenta]📌已持仓+挂单[/bold magenta]"
+            status_str = f"[bold magenta]{t('status_held_order', lang=lang)}[/bold magenta]"
         elif status_tag == "HELD":
-            status_str = "[bold magenta]📌已持仓[/bold magenta]"
+            status_str = f"[bold magenta]{t('status_held', lang=lang)}[/bold magenta]"
         elif status_tag == "ORDERED":
-            status_str = "[bold yellow]⏳挂单中[/bold yellow]"
+            status_str = f"[bold yellow]{t('status_ordered', lang=lang)}[/bold yellow]"
         else:
-            status_str = "[bold green]✨新机会[/bold green]"
+            status_str = f"[bold green]{t('status_new', lang=lang)}[/bold green]"
 
         # 资产高亮
         if "SPREAD" in asset_mode or "OPTION" in asset_mode:
-            asset_str = "[magenta]期权价差[/magenta]"
+            asset_str = f"[magenta]{t('asset_spread', lang=lang)}[/magenta]"
         else:
-            asset_str = "[blue]正股[/blue]"
+            asset_str = f"[blue]{t('asset_equity', lang=lang)}[/blue]"
 
         # 评分高亮 (>= 0.85 亮绿, >= 0.70 浅绿, 其余黄色)
         if score >= 0.85:
@@ -374,51 +376,53 @@ def render_scanner_results_table(
 
 def print_scanner_results(
     scan_results: List[Dict[str, Any]],
-    current_regime: str = "Bull_Trend"
+    current_regime: str = "Bull_Trend",
+    lang: Optional[str] = None
 ) -> None:
     """直接在控制台打印扫盘推荐表格"""
-    console.print(render_scanner_results_table(scan_results, current_regime))
+    console.print(render_scanner_results_table(scan_results, current_regime, lang=lang))
 
 
-def render_hybrid_memo_panel(memo, critic_passed: bool, violations: list):
+def render_hybrid_memo_panel(memo, critic_passed: bool, violations: list, lang: Optional[str] = None):
     """渲染多智能体投资决策备忘录 Panel"""
     eval_lines = []
     for e in memo.agent_evaluations:
         escaped_rationale = escape(str(e.rationale))
-        eval_lines.append(f"• [bold green]【{e.agent_name}】[/bold green] (评分: {e.score:.2f})\n  {escaped_rationale}")
+        eval_lines.append(f"• [bold green]【{e.agent_name}】[/bold green] (Score: {e.score:.2f})\n  {escaped_rationale}")
 
     eval_text = "\n\n".join(eval_lines)
     critic_status = (
-        "[bold green][OK] S&P 500 Universe  [OK] No Earnings in 7D  [OK] Risk Limits Passed[/bold green]"
+        f"[bold green]{t('critic_ok_all', lang=lang)}[/bold green]"
         if critic_passed
-        else f"[bold red][REJECT] {escape('; '.join(violations))}[/bold red]"
+        else f"[bold red]{t('critic_rejected_prefix', lang=lang)} {escape('; '.join(violations))}[/bold red]"
     )
 
-    if getattr(memo, "asset_type", "EQUITY") == "OPTION":
-        header = f"""[bold cyan]提案编号:[/bold cyan] {memo.proposal_id} | [bold magenta]类别: OPTION (Standard {memo.option_type})[/bold magenta]
-[bold cyan]合约代码:[/bold cyan] {memo.contract_symbol} (Exp: {memo.expiration_date}, Strike: ${memo.strike_price:.2f}, DTE: {memo.dte}D)
-[bold cyan]建议操作:[/bold cyan] {memo.action} | [bold cyan]建议张数:[/bold cyan] {memo.suggested_contracts} 张 (单张权利金: ${memo.premium_per_share:.2f})
-[bold cyan]总权利金:[/bold cyan] ${memo.total_premium:.2f} ({memo.cost_pct:.2%}) | [bold cyan]Greeks:[/bold cyan] Delta {memo.delta} | Theta {memo.theta} | IV {memo.iv:.1%}
-[bold cyan]止盈 (TP):[/bold cyan] ${memo.take_profit_price:.2f} (+50.0%) | [bold cyan]止损 (SL):[/bold cyan] ${memo.stop_loss_price:.2f} (-30.0%)"""
+    asset_type = getattr(memo, "asset_type", "EQUITY")
+    if asset_type == "OPTION":
+        header = f"""[bold cyan]{t('memo_proposal_id', lang=lang)}:[/bold cyan] {memo.proposal_id} | [bold magenta]{t('memo_category', lang=lang)}: OPTION (Standard {memo.option_type})[/bold magenta]
+[bold cyan]{t('memo_contract_symbol', lang=lang)}:[/bold cyan] {memo.contract_symbol} (Exp: {memo.expiration_date}, Strike: ${memo.strike_price:.2f}, DTE: {memo.dte}D)
+[bold cyan]{t('memo_action', lang=lang)}:[/bold cyan] {memo.action} | [bold cyan]{t('memo_suggested_contracts', lang=lang)}:[/bold cyan] {memo.suggested_contracts} (Premium: ${memo.premium_per_share:.2f})
+[bold cyan]{t('memo_total_premium', lang=lang)}:[/bold cyan] ${memo.total_premium:.2f} ({memo.cost_pct:.2%}) | [bold cyan]Greeks:[/bold cyan] Delta {memo.delta} | Theta {memo.theta} | IV {memo.iv:.1%}
+[bold cyan]{t('memo_take_profit', lang=lang)}:[/bold cyan] ${memo.take_profit_price:.2f} (+50.0%) | [bold cyan]{t('memo_stop_loss', lang=lang)}:[/bold cyan] ${memo.stop_loss_price:.2f} (-30.0%)"""
     else:
         stock_amount = getattr(memo, "stock_total_amount", None) or getattr(memo, "total_amount", 0.0)
         curr_price = getattr(memo, "current_underlying_price", None) or getattr(memo, "current_price", 0.0)
         ticker_name = getattr(memo, "underlying_ticker", None) or getattr(memo, "ticker", "")
-        header = f"""[bold cyan]提案编号:[/bold cyan] {memo.proposal_id} | [bold green]类别: EQUITY (Common Stock)[/bold green]
-[bold cyan]目标标的:[/bold cyan] {ticker_name} | [bold cyan]现价:[/bold cyan] ${curr_price:.2f} | [bold cyan]建议股数:[/bold cyan] {memo.suggested_shares} 股 (${stock_amount:.2f})
-[bold cyan]止盈 (TP):[/bold cyan] ${memo.take_profit_price:.2f} (+8.0%) | [bold cyan]止损 (SL):[/bold cyan] ${memo.stop_loss_price:.2f} (-4.0%)"""
+        header = f"""[bold cyan]{t('memo_proposal_id', lang=lang)}:[/bold cyan] {memo.proposal_id} | [bold green]{t('memo_category', lang=lang)}: EQUITY (Common Stock)[/bold green]
+[bold cyan]{t('memo_target_symbol', lang=lang)}:[/bold cyan] {ticker_name} | [bold cyan]{t('memo_current_price', lang=lang)}:[/bold cyan] ${curr_price:.2f} | [bold cyan]{t('memo_suggested_shares', lang=lang)}:[/bold cyan] {memo.suggested_shares} shares (${stock_amount:.2f})
+[bold cyan]{t('memo_take_profit', lang=lang)}:[/bold cyan] ${memo.take_profit_price:.2f} (+8.0%) | [bold cyan]{t('memo_stop_loss', lang=lang)}:[/bold cyan] ${memo.stop_loss_price:.2f} (-4.0%)"""
 
     content = f"""{header}
 ────────────────────────────────────────────────────────────────────────────────
-[bold yellow]【5 大研究智能体辩论与评分】[/bold yellow]
+[bold yellow]{t('memo_agent_debate_section', lang=lang)}[/bold yellow]
 {eval_text}
 
-[bold magenta]=> 加权共识得分: {memo.consensus_score:.2f} (阈值 >= 0.70)[/bold magenta]
+[bold magenta]{t('memo_consensus_score', lang=lang, score=memo.consensus_score)}[/bold magenta]
 ────────────────────────────────────────────────────────────────────────────────
-[bold yellow]【Critic 独立合规审查】[/bold yellow]
+[bold yellow]{t('memo_critic_section', lang=lang)}[/bold yellow]
 {critic_status}"""
 
-    console.print(Panel(content, title=f"投资决策备忘录 ({getattr(memo, 'asset_type', 'EQUITY')})", border_style="blue", expand=False))
+    console.print(Panel(content, title=t("memo_title", lang=lang, asset_type=asset_type), border_style="blue", expand=False))
 
 
 # 别名兼容

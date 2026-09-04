@@ -14,6 +14,7 @@ from alpaca.trading.requests import (
     TakeProfitRequest,
     GetOrdersRequest,
     GetOptionContractsRequest,
+    ClosePositionRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ class AlpacaGateway:
         try:
             return self.trading_client.get_all_positions()
         except Exception as e:
-            logger.warning(f"获取持仓列表异常: {e}")
+            logger.warning(f"[Alpaca Error] Failed to fetch open positions: {e}")
             return []
 
     def get_open_orders(self, nested: bool = True) -> List[Any]:
@@ -59,7 +60,7 @@ class AlpacaGateway:
             req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=nested)
             return self.trading_client.get_orders(filter=req)
         except Exception as e:
-            logger.warning(f"获取未成交订单列表异常: {e}")
+            logger.warning(f"[Alpaca Error] Failed to fetch open orders: {e}")
             return []
 
     def get_current_price(self, symbol: str) -> float:
@@ -85,9 +86,20 @@ class AlpacaGateway:
         )
         return self.trading_client.submit_order(order_data=req)
 
-    def close_position(self, symbol: str):
-        """Liquidate and close an open position for a given symbol."""
+    def close_position(self, symbol: str, qty: Optional[float] = None):
+        """Liquidate and close an open position for a given symbol (full or partial qty)."""
+        if qty is not None:
+            req = ClosePositionRequest(qty=str(qty))
+            return self.trading_client.close_position(symbol_or_asset_id=symbol, close_options=req)
         return self.trading_client.close_position(symbol_or_asset_id=symbol)
+
+    def cancel_order(self, order_id: str):
+        """Cancel a specific active open order by order ID."""
+        return self.trading_client.cancel_order_by_id(order_id)
+
+    def cancel_all_orders(self):
+        """Cancel all active open orders."""
+        return self.trading_client.cancel_orders()
 
 
     def get_account_summary(self) -> Dict[str, float]:
@@ -163,7 +175,7 @@ class AlpacaGateway:
                 return res
             return []
         except Exception as e:
-            logger.warning(f"获取 {underlying_symbol} 期权合约链异常: {e}")
+            logger.warning(f"[Alpaca Error] Failed to fetch {underlying_symbol} option contract chain: {e}")
             return []
 
     def get_best_option_contract(

@@ -1,4 +1,5 @@
 from core.agents.base_agent import BaseFeatherlessAgent, AgentEvaluation
+from cli.i18n import get_current_lang
 
 class ExoticAgent(BaseFeatherlessAgent):
     """事件驱动型智能体，专注于利用特定事件窗口獲取收益。"""
@@ -35,12 +36,21 @@ class ExoticAgent(BaseFeatherlessAgent):
         """衍生品/事件驱动智能体量化启发式评估模型"""
         days_to_earnings = int(context_data.get("days_to_earnings", 30))
         implied_vol = float(context_data.get("implied_vol", 0.35))
+        is_en = get_current_lang() == "en"
 
         if days_to_earnings > 14:
             score = 0.80
-            rat = f"财报窗口尚有 {days_to_earnings} 天，规避二元事件风险 (IV={implied_vol:.1%})"
+            rat = (
+                f"Earnings window is {days_to_earnings} days away, binary event risk averted (IV={implied_vol:.1%})"
+                if is_en
+                else f"财报窗口尚有 {days_to_earnings} 天，规避二元事件风险 (IV={implied_vol:.1%})"
+            )
         else:
             score = 0.55
-            rat = f"临近二元财报窗口 ({days_to_earnings}天)，存在事件波动率风险"
+            rat = (
+                f"Near binary earnings window ({days_to_earnings}D), event volatility risk exists"
+                if is_en
+                else f"临近二元财报窗口 ({days_to_earnings}天)，存在事件波动率风险"
+            )
 
         return AgentEvaluation(agent_name=self.name, score=score, rationale=rat)
