@@ -1,6 +1,10 @@
 # AiAgentForTrading
 
 <p align="center">
+  <img src="cover_image.jpg" alt="AiAgentForTrading Banner" width="100%">
+</p>
+
+<p align="center">
   <b>English</b> | <a href="README_zh.md">简体中文</a>
 </p>
 
