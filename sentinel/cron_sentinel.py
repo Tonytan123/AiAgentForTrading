@@ -7,6 +7,7 @@ sentinel/cron_sentinel.py
 import os
 import re
 import time
+import math
 import json
 import logging
 import traceback
@@ -162,9 +163,10 @@ class CronSentinel:
     ):
         if trading_client is not None:
             self.trading_client = trading_client
+            self.gateway = None
         else:
-            gateway = AlpacaExecutionClient(api_key=api_key, secret_key=secret_key, paper=paper)
-            self.trading_client = gateway.trading_client
+            self.gateway = AlpacaExecutionClient(api_key=api_key, secret_key=secret_key, paper=paper)
+            self.trading_client = self.gateway.trading_client
 
         self.max_holding_days = max_holding_days
         self.max_option_dte_close = max_option_dte_close
@@ -360,6 +362,7 @@ class CronSentinel:
                             missing_tp=not has_tp_order,
                             missing_sl=not has_sl_order,
                             existing_orders=related_orders,
+                            current_price=current_price,
                         )
                         stats["orphan_positions_healed"] += 1
                     else:
@@ -397,26 +400,53 @@ class CronSentinel:
         missing_tp: bool,
         missing_sl: bool,
         existing_orders: Optional[List[Any]] = None,
+        current_price: Optional[float] = None,
     ) -> None:
         """为孤儿持仓补发止盈与止损挂单 (自动升级替换为 OCO 双向保护单)"""
-        tp_price = round(avg_price * (1.0 + self.default_tp_pct), 2)
-        sl_price = round(avg_price * (1.0 - self.default_sl_pct), 2)
-
         try:
-            # 若保护单不完整（无论全缺还是仅单边），先清理已存在的单边卖单，释放份额以统一提交 OCO 单
+            # 1. 若保护单不完整（无论全缺还是仅单边），先清理已存在的单边卖单，释放份额以统一提交 OCO 单
+            cleaned_any = False
             if existing_orders:
                 for ord_item in existing_orders:
                     if getattr(ord_item, "side", None) == OrderSide.SELL:
                         try:
                             self.trading_client.cancel_order_by_id(order_id=ord_item.id)
                             logger.info(self._t("cleaned_legacy_order", symbol=symbol, order_id=ord_item.id))
-                        except Exception:
-                            pass
+                            cleaned_any = True
+                        except Exception as ce:
+                            logger.warning(f"Failed to cancel legacy order {ord_item.id}: {ce}")
 
-            # 统一提交 OCO (One-Cancels-Other) 订单，同时覆盖 TP 限价与 SL 止损
+            # 若撤销了挂单，短暂等待 Alpaca 释放锁定份额 (避免异步处理导致 insufficient qty)
+            if cleaned_any:
+                time.sleep(1.0)
+
+            # 2. 获取当前参考市价，确保 SL 严格低于市价，TP 严格高于市价
+            cur_p = current_price
+            if cur_p is None or cur_p <= 0:
+                if getattr(self, "gateway", None) is not None:
+                    try:
+                        cur_p = self.gateway.get_current_price(symbol)
+                    except Exception:
+                        cur_p = avg_price
+                else:
+                    cur_p = avg_price
+
+            # 止盈价必须高于市价和均价，止损价必须低于当前市价
+            tp_price = round(max(avg_price * (1.0 + self.default_tp_pct), cur_p * 1.005), 2)
+            sl_price = round(min(avg_price * (1.0 - self.default_sl_pct), cur_p * 0.995), 2)
+            if sl_price <= 0:
+                sl_price = round(cur_p * 0.95, 2)
+
+            # 3. Alpaca OCO/Bracket 订单仅支持整数股 (Integer qty)
+            order_qty = int(math.floor(qty)) if qty >= 1 else qty
+            if order_qty <= 0:
+                logger.warning(f"[{symbol}] Qty too small for OCO order: {qty}")
+                return
+
+            # 4. 统一提交 OCO (One-Cancels-Other) 订单，同时覆盖 TP 限价与 SL 止损
             oco_req = LimitOrderRequest(
                 symbol=symbol,
-                qty=qty,
+                qty=order_qty,
                 side=OrderSide.SELL,
                 time_in_force=TimeInForce.GTC,
                 order_class=OrderClass.OCO,
@@ -428,7 +458,7 @@ class CronSentinel:
                 self._t(
                     "reissued_oco_order",
                     symbol=symbol,
-                    qty=qty,
+                    qty=order_qty,
                     tp_price=tp_price,
                     sl_price=sl_price,
                     order_id=oco_res.id,
@@ -439,14 +469,17 @@ class CronSentinel:
                 "order_id": str(oco_res.id),
                 "take_profit_price": tp_price,
                 "stop_loss_price": sl_price,
-                "qty": qty,
+                "qty": order_qty,
             }, lang=self.lang)
 
         except Exception as e:
-            logger.error(self._t("reissue_order_err", symbol=symbol, error=e), exc_info=True)
+            err_msg = str(e)
+            if hasattr(e, "response") and getattr(e.response, "text", None):
+                err_msg = f"{err_msg} | Response: {e.response.text}"
+            logger.error(self._t("reissue_order_err", symbol=symbol, error=err_msg), exc_info=True)
             record_audit_log("ORPHAN_HEAL_FAILED", {
                 "symbol": symbol,
-                "error": str(e),
+                "error": err_msg,
             }, lang=self.lang)
 
     def _liquidate_position(self, symbol: str, qty: float, reason: str) -> None:
